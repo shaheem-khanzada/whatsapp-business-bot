@@ -1,52 +1,67 @@
 import qrcode from 'qrcode-terminal'
+import QRCode from 'qrcode'
 import pkg from 'whatsapp-web.js'
-import { format } from 'date-fns'
 
 const { Client, LocalAuth, MessageMedia } = pkg
 
 export class WhatsAppService {
   private client: InstanceType<typeof Client> | null = null
   private isInitialized = false
+  private currentQRCode: string | null = null
 
   constructor() {
-    this.initializeClient()
+    // Don't auto-initialize, let API control it
   }
 
   /**
    * Initialize WhatsApp client with QR authentication
    */
-  private async initializeClient() {
+  async initializeClient() {
     if (this.isInitialized) return
 
     this.client = new Client({
       authStrategy: new LocalAuth(),
       puppeteer: {
-        headless: false,
+        headless: true, // Set to true for production
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
         executablePath: '/Users/muhammadshaheem/.cache/puppeteer/chrome/mac_arm-140.0.7339.82/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
       },
     })
 
-    this.client.on('qr', (qr: string) => {
-      console.log('📲 Scan this QR code in WhatsApp → Linked Devices:')
-      qrcode.generate(qr, { small: true })
+    this.client.on('qr', async (qr: string) => {
+      console.log('📲 QR code generated for WhatsApp login')
+      // Generate QR code as base64 data URL
+      this.currentQRCode = await QRCode.toDataURL(qr)
     })
 
     this.client.on('ready', () => {
       console.log('✅ WhatsApp client is ready!')
       this.isInitialized = true
+      this.currentQRCode = null // Clear QR code once connected
     })
 
     this.client.on('auth_failure', (msg) => {
       console.error('❌ WhatsApp authentication failed:', msg)
+      this.currentQRCode = null
     })
 
     this.client.on('disconnected', (reason) => {
       console.log('❌ WhatsApp client disconnected:', reason)
       this.isInitialized = false
+      this.currentQRCode = null
     })
 
     await this.client.initialize()
+  }
+
+  /**
+   * Get current QR code as base64 data URL
+   */
+  async getQRCode(): Promise<string> {
+    if (!this.currentQRCode) {
+      throw new Error('No QR code available. Please initialize WhatsApp first.')
+    }
+    return this.currentQRCode
   }
 
   /**

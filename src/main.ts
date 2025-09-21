@@ -96,4 +96,4 @@ async function exampleUsage() {
 }
 
 // Run the example
-exampleUsage()
+// exampleUsage()
