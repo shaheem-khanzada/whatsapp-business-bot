@@ -1,6 +1,6 @@
 # WhatsApp Business Bot API
 
-A production-ready Node.js TypeScript API for WhatsApp Business automation, specifically designed for water delivery services.
+A production-ready Node.js TypeScript API for WhatsApp Business automation with multi-client support, specifically designed for water delivery services.
 
 ## 🚀 Quick Start
 
@@ -17,11 +17,13 @@ cp env.example .env
 npm run api:dev
 ```
 
-### 2. WhatsApp Login
+### 2. Multi-Client WhatsApp Login
 
-1. **Initialize WhatsApp and get QR code:**
+1. **Initialize WhatsApp for a specific client:**
    ```bash
-   curl -X POST http://localhost:3000/api/whatsapp/login
+   curl -X POST http://localhost:3000/api/whatsapp/login \
+     -H "Content-Type: application/json" \
+     -d '{"clientId": "user-1"}'
    ```
 
 2. **Scan the QR code** with your WhatsApp mobile app:
@@ -30,14 +32,20 @@ npm run api:dev
 
 3. **Check connection status:**
    ```bash
-   curl -X GET http://localhost:3000/api/whatsapp/status
+   curl -X GET "http://localhost:3000/api/whatsapp/status?clientId=user-1"
+   ```
+
+4. **Get all active clients:**
+   ```bash
+   curl -X GET http://localhost:3000/api/whatsapp/clients
    ```
 
 ## 📋 API Endpoints
 
 ### WhatsApp Management
-- `POST /api/whatsapp/login` - Initialize WhatsApp and get QR code
-- `GET /api/whatsapp/status` - Get WhatsApp connection status
+- `POST /api/whatsapp/login` - Initialize WhatsApp and get QR code for specific client
+- `GET /api/whatsapp/status` - Get WhatsApp connection status for specific client
+- `GET /api/whatsapp/clients` - Get all active clients
 - `POST /api/whatsapp/check-registration` - Check if phone number is registered
 - `POST /api/whatsapp/bulk-check-registration` - Check multiple phone numbers
 
@@ -62,15 +70,18 @@ npm run api:dev
 POST http://localhost:3000/api/whatsapp/login
 Content-Type: application/json
 
-{}
+{
+  "clientId": "user-1"
+}
 ```
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "WhatsApp initialized successfully. Scan the QR code to connect.",
+  "message": "WhatsApp initialized successfully for client user-1. Scan the QR code to connect.",
   "data": {
+    "clientId": "user-1",
     "qrCode": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
     "status": "waiting_for_scan"
   }
@@ -79,7 +90,7 @@ Content-Type: application/json
 
 ### 2. Check WhatsApp Status
 ```http
-GET http://localhost:3000/api/whatsapp/status
+GET http://localhost:3000/api/whatsapp/status?clientId=user-1
 ```
 
 **Response:**
@@ -88,17 +99,48 @@ GET http://localhost:3000/api/whatsapp/status
   "success": true,
   "message": "Status retrieved successfully",
   "data": {
-    "status": "CONNECTED"
+    "clientId": "user-1",
+    "status": "CONNECTED",
+    "isReady": true,
+    "isInitialized": true
   }
 }
 ```
 
-### 3. Send Delivery Confirmation
+### 3. Get All Active Clients
+```http
+GET http://localhost:3000/api/whatsapp/clients
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Active clients retrieved successfully",
+  "data": {
+    "clients": [
+      {
+        "clientId": "user-1",
+        "isReady": true,
+        "isInitialized": true
+      },
+      {
+        "clientId": "user-2",
+        "isReady": false,
+        "isInitialized": true
+      }
+    ]
+  }
+}
+```
+
+### 4. Send Delivery Confirmation
 ```http
 POST http://localhost:3000/api/delivery/confirm
 Content-Type: application/json
 
 {
+  "clientId": "user-1",
   "customerId": "1",
   "bottlesDelivered": 2,
   "emptyBottlesCollected": 3,
@@ -114,17 +156,19 @@ Content-Type: application/json
   "success": true,
   "message": "Delivery confirmation sent successfully",
   "data": {
+    "clientId": "user-1",
     "deliveryId": "DEL-1703123456789"
   }
 }
 ```
 
-### 4. Send Service Announcement
+### 5. Send Service Announcement
 ```http
 POST http://localhost:3000/api/notifications/announcement
 Content-Type: application/json
 
 {
+  "clientId": "user-1",
   "title": "New Delivery Schedule",
   "message": "Starting next week, we will be delivering on Tuesdays and Fridays instead of Mondays and Thursdays.",
   "customerIds": ["1", "2", "3"]
@@ -137,6 +181,7 @@ Content-Type: application/json
   "success": true,
   "message": "Announcement sent to 3 customers",
   "data": {
+    "clientId": "user-1",
     "title": "New Delivery Schedule",
     "message": "Starting next week, we will be delivering on Tuesdays and Fridays instead of Mondays and Thursdays.",
     "targetArea": null
@@ -144,12 +189,13 @@ Content-Type: application/json
 }
 ```
 
-### 5. Send Invoice
+### 6. Send Invoice
 ```http
 POST http://localhost:3000/api/invoices/send
 Content-Type: application/json
 
 {
+  "clientId": "user-1",
   "customerId": "1",
   "totalAmount": 100,
   "items": [
@@ -170,6 +216,7 @@ Content-Type: application/json
   "success": true,
   "message": "Invoice sent successfully",
   "data": {
+    "clientId": "user-1",
     "invoiceId": "INV-1703123456789"
   }
 }
@@ -242,14 +289,16 @@ JWT_SECRET=your-super-secret-jwt-key
 ALLOWED_ORIGINS=https://yourdomain.com
 ```
 
-## 📱 WhatsApp Integration
+## 📱 Multi-Client WhatsApp Integration
 
-The API uses `whatsapp-web.js` library which:
-- Connects to WhatsApp Web
-- Requires QR code scanning for authentication
-- Stores session data locally
-- Supports sending text messages, images, and PDFs
-- Handles bulk messaging with rate limiting
+The API uses `whatsapp-web.js` library with multi-client support:
+- **Multiple Users**: Each user gets their own WhatsApp session with unique `clientId`
+- **Session Management**: Each client's session is stored separately using `LocalAuth({ clientId })`
+- **QR Code Authentication**: Each client needs to scan their own QR code
+- **Independent Operations**: Users can send messages independently without affecting others
+- **Session Persistence**: Sessions are saved locally and persist across server restarts
+- **Bulk Messaging**: Supports sending text messages, images, and PDFs with rate limiting
+- **Client Status Tracking**: Real-time status monitoring for each client
 
 ## 🔒 Security Features
 
@@ -281,11 +330,14 @@ npm test
 
 ## 📝 Notes
 
-- WhatsApp session data is stored in `.wwebjs_auth/` directory
-- QR code is generated as base64 data URL for easy display in admin panels
-- All message templates are centralized in `src/templates/messageTemplates.ts`
-- Phone numbers should be in international format (+923161137297)
-- Rate limiting prevents spam and ensures WhatsApp compliance
+- **Multi-Client Sessions**: Each client's WhatsApp session is stored in `.wwebjs_auth/` directory with their unique `clientId`
+- **QR Code Display**: QR codes are generated as base64 data URLs for easy display in admin panels
+- **Client Management**: Use unique `clientId` for each user (e.g., "user-1", "user-2", "brother-account")
+- **Session Persistence**: Sessions persist across server restarts - users don't need to re-scan QR codes
+- **Message Templates**: All message templates are centralized in `src/templates/messageTemplates.ts`
+- **Phone Format**: Phone numbers should be in international format (+923161137297)
+- **Rate Limiting**: Prevents spam and ensures WhatsApp compliance
+- **Error Handling**: If client is not ready, API returns clear error message to call `/api/whatsapp/login` first
 
 ## 🤝 Support
 

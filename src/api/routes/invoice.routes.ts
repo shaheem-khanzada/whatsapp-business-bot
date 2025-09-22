@@ -1,15 +1,10 @@
 import { Router, Request, Response } from 'express'
-import { InvoiceService } from '../../services/invoice.service'
-import { WhatsAppService } from '../../services/whatsapp.service'
+import { invoiceService } from '../../services/global'
 import { validateInvoice, validatePhoneNumber } from '../middleware/validation'
 import { AppError } from '../middleware/errorHandler'
-import { Customer, Invoice, InvoiceItem } from '../../types/business'
+import { Customer, Invoice } from '../../types/business'
 
 const router = Router()
-
-// Initialize services
-const whatsappService = new WhatsAppService()
-const invoiceService = new InvoiceService(whatsappService)
 
 /**
  * @route   POST /api/invoices/send
@@ -18,45 +13,27 @@ const invoiceService = new InvoiceService(whatsappService)
  */
 router.post('/send', validateInvoice, async (req: Request, res: Response) => {
   try {
-    const { customerId, totalAmount, items, pdfUrl, dueDate } = req.body
+    const { clientId, customerId, totalAmount, items, pdfUrl, dueDate } = req.body
 
     // In a real app, you'd fetch customer from database
     const customer: Customer = {
-      id: customerId,
       name: 'Shaheem Khan',
       phone: '+923161137297',
-      address: '123 Main Street, Karachi',
-      deliveryArea: 'Gulshan-e-Iqbal',
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date()
     }
 
     const invoice: Invoice = {
-      id: `INV-${Date.now()}`,
-      customerId,
       customer,
-      dueDate: new Date(dueDate || Date.now() + 7 * 24 * 60 * 60 * 1000),
-      totalAmount,
-      paidAmount: 0,
+      dueAt: new Date(dueDate || Date.now() + 7 * 24 * 60 * 60 * 1000),
       dueAmount: totalAmount,
       status: 'unpaid',
-      items: items.map((item: any) => ({
-        description: item.description,
-        quantity: item.quantity,
-        rate: item.rate,
-        amount: item.amount
-      })),
-      createdAt: new Date(),
-      updatedAt: new Date()
+      pdfUrl: pdfUrl
     }
 
-    await invoiceService.sendInvoicePdf(customer, invoice, pdfUrl)
+    await invoiceService.sendInvoicePdf(clientId, invoice)
 
     res.json({
       success: true,
-      message: 'Invoice sent successfully',
-      data: { invoiceId: invoice.id }
+      message: 'Invoice sent successfully'
     })
   } catch (error) {
     throw new AppError(`Failed to send invoice: ${error}`, 500)
@@ -70,7 +47,7 @@ router.post('/send', validateInvoice, async (req: Request, res: Response) => {
  */
 router.post('/payment-reminder', async (req: Request, res: Response) => {
   try {
-    const { customerId, invoiceId, amount, dueDate, pdfUrl } = req.body
+    const { clientId, customerId, invoiceId, amount, dueDate, pdfUrl } = req.body
 
     if (!customerId || !amount || !dueDate) {
       throw new AppError('Customer ID, amount, and due date are required', 400)
@@ -78,43 +55,23 @@ router.post('/payment-reminder', async (req: Request, res: Response) => {
 
     // In a real app, you'd fetch customer and invoice from database
     const customer: Customer = {
-      id: customerId,
       name: 'Shaheem Khan',
       phone: '+923161137297',
-      address: '123 Main Street, Karachi',
-      deliveryArea: 'Gulshan-e-Iqbal',
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date()
     }
 
     const invoice: Invoice = {
-      id: invoiceId || `INV-${Date.now()}`,
-      customerId,
       customer,
-      dueDate: new Date(dueDate),
-      totalAmount: amount,
-      paidAmount: 0,
+      dueAt: new Date(dueDate || Date.now() + 7 * 24 * 60 * 60 * 1000),
       dueAmount: amount,
       status: 'unpaid',
-      items: [
-        {
-          description: 'Water Delivery Service',
-          quantity: 1,
-          rate: amount,
-          amount: amount
-        }
-      ],
-      createdAt: new Date(),
-      updatedAt: new Date()
+      pdfUrl: pdfUrl
     }
 
-    await invoiceService.sendPaymentReminderWithInvoice(customer, invoice, pdfUrl)
+    await invoiceService.sendPaymentReminderWithInvoice(clientId, invoice)
 
     res.json({
       success: true,
       message: 'Payment reminder sent successfully',
-      data: { invoiceId: invoice.id }
     })
   } catch (error) {
     throw new AppError(`Failed to send payment reminder: ${error}`, 500)

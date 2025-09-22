@@ -4,13 +4,11 @@
   "description": "WhatsApp Business Bot for sending invoices",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/main.js",
-    "dev": "ts-node src/main.ts",
+    "start": "node dist/server.js",
     "watch": "ts-node --watch src/main.ts",
     "api": "ts-node src/api/server.ts",
-    "api:dev": "nodemon --exec ts-node src/api/server.ts",
-    "api:build": "tsc && node dist/api/server.js"
+    "dev": "nodemon --exec ts-node src/server.ts",
+    "build": "tsc"
   },
   "keywords": ["whatsapp", "bot", "invoice", "business"],
   "author": "",

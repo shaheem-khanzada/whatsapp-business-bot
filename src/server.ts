@@ -4,8 +4,8 @@ import helmet from 'helmet'
 import morgan from 'morgan'
 import dotenv from 'dotenv'
 import rateLimit from 'express-rate-limit'
-import { errorHandler, notFound } from './middleware/errorHandler'
-import apiRoutes from './routes'
+import { errorHandler, notFound } from './api/middleware/errorHandler'
+import apiRoutes from './api/routes'
 
 // Load environment variables
 dotenv.config()
