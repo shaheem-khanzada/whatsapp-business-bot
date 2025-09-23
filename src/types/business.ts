@@ -1,12 +1,8 @@
 // Business entity types for water delivery service
 
-export interface Customer {
+export interface Delivery {
   name: string;
   phone: string;
-}
-
-export interface Delivery {
-  customer: Customer;
   date: Date;
   bottlesDelivered: number;
   emptyBottlesCollected: number;
@@ -17,8 +13,9 @@ export interface Delivery {
 }
 
 export interface Invoice {
-  customer: Customer;
-  dueAt: Date;
+  name: string;
+  phone: string;
+  dueAt: string;
   pdfUrl: string;
   dueAmount: number;
   status: 'unpaid' | 'partially-paid' | 'paid';

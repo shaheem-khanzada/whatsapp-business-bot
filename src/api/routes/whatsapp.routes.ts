@@ -1,6 +1,9 @@
-import { Router, Request, Response } from 'express'
-import { whatsappService } from '../../services/global'
-import { validatePhoneNumber } from '../middleware/validation'
+import { Router, Request, Response, NextFunction } from 'express'
+import { WhatsAppService } from '../../services/whatsapp.service'
+
+// Create a single instance
+const whatsappService = new WhatsAppService()
+import { validatePhoneNumber, validateSendMessage, upload } from '../middleware/validation'
 import { AppError } from '../middleware/errorHandler'
 
 const router = Router()
@@ -10,7 +13,7 @@ const router = Router()
  * @desc    Initialize WhatsApp and get QR code for scanning
  * @access  Public
  */
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { clientId } = req.body
 
@@ -19,7 +22,7 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     // Initialize WhatsApp client for specific clientId
-    await whatsappService.initializeClient(clientId)
+    await whatsappService.loginClient(clientId)
     
     // Get QR code as base64 image
     const qrCodeDataUrl = await whatsappService.getQRCode(clientId)
@@ -34,7 +37,7 @@ router.post('/login', async (req: Request, res: Response) => {
       }
     })
   } catch (error) {
-    throw new AppError(`Failed to initialize WhatsApp: ${error}`, 500)
+    next(new AppError(`${error}`, 500))
   }
 })
 
@@ -43,7 +46,7 @@ router.post('/login', async (req: Request, res: Response) => {
  * @desc    Check if phone number is registered on WhatsApp
  * @access  Public
  */
-router.post('/check-registration', validatePhoneNumber, async (req: Request, res: Response) => {
+router.post('/check-registration', validatePhoneNumber, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { clientId, phone } = req.body
 
@@ -59,53 +62,7 @@ router.post('/check-registration', validatePhoneNumber, async (req: Request, res
       data: { clientId, phone, isRegistered }
     })
   } catch (error) {
-    throw new AppError(`Failed to check registration: ${error}`, 500)
-  }
-})
-
-/**
- * @route   POST /api/whatsapp/bulk-check-registration
- * @desc    Check registration status for multiple phone numbers
- * @access  Public
- */
-router.post('/bulk-check-registration', async (req: Request, res: Response) => {
-  try {
-    const { clientId, phones } = req.body
-
-    if (!clientId) {
-      throw new AppError('clientId is required', 400)
-    }
-
-    if (!phones || !Array.isArray(phones)) {
-      throw new AppError('Phones array is required', 400)
-    }
-
-    // Validate all phone numbers
-    const phoneRegex = /^\+92[0-9]{10}$/
-    const invalidPhones = phones.filter((phone: string) => !phoneRegex.test(phone))
-    
-    if (invalidPhones.length > 0) {
-      throw new AppError(`Invalid phone numbers: ${invalidPhones.join(', ')}`, 400)
-    }
-
-    const results = await Promise.all(
-      phones.map(async (phone: string) => {
-        try {
-          const isRegistered = await whatsappService.isRegisteredUser(clientId, phone)
-          return { phone, isRegistered, error: null }
-        } catch (error: any) {
-          return { phone, isRegistered: false, error: error.message }
-        }
-      })
-    )
-
-    res.json({
-      success: true,
-      message: 'Bulk registration check completed',
-      data: { clientId, results }
-    })
-  } catch (error) {
-    throw new AppError(`Failed to check bulk registration: ${error}`, 500)
+    next(new AppError(`Failed to check registration: ${error}`, 500))
   }
 })
 
@@ -114,7 +71,7 @@ router.post('/bulk-check-registration', async (req: Request, res: Response) => {
  * @desc    Get WhatsApp client status
  * @access  Public
  */
-router.get('/status', async (req: Request, res: Response) => {
+router.get('/status', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { clientId } = req.query
 
@@ -123,7 +80,6 @@ router.get('/status', async (req: Request, res: Response) => {
     }
 
     const status = await whatsappService.getStatus(clientId as string)
-    const clientStatus = whatsappService.getClientStatus(clientId as string)
 
     res.json({
       success: true,
@@ -131,41 +87,154 @@ router.get('/status', async (req: Request, res: Response) => {
       data: { 
         clientId,
         status,
-        isReady: clientStatus?.isReady || false,
-        isInitialized: clientStatus?.isInitialized || false
       }
     })
   } catch (error) {
-    throw new AppError(`Failed to get status: ${error}`, 500)
+    next(new AppError(`Failed to get status: ${error}`, 500))
   }
 })
 
 /**
- * @route   GET /api/whatsapp/clients
- * @desc    Get all active clients
+ * @route   GET /api/whatsapp/qr/:clientId
+ * @desc    Get current QR code for a specific client
  * @access  Public
  */
-router.get('/clients', async (req: Request, res: Response) => {
+router.get('/qr/:clientId', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const activeClients = whatsappService.getActiveClients()
-    const clientsWithStatus = activeClients.map(clientId => {
-      const status = whatsappService.getClientStatus(clientId)
-      return {
-        clientId,
-        isReady: status?.isReady || false,
-        isInitialized: status?.isInitialized || false
+    const { clientId } = req.params
+
+    if (!clientId) {
+      throw new AppError('clientId is required', 400)
+    }
+
+    // Check if client exists
+    if (!whatsappService.getActiveClients().includes(clientId)) {
+      throw new AppError(`Client ${clientId} not found`, 404)
+    }
+
+    // Get QR code directly from storage
+    const qrCode = whatsappService.getQRCodeDirect(clientId)
+    
+    if (!qrCode) {
+      // Check if client is already connected
+      const status = await whatsappService.getStatus(clientId)
+      if (status === 'CONNECTED') {
+        return res.json({
+          success: true,
+          message: 'Client is already connected',
+          data: { 
+            clientId,
+            qrCode: null,
+            status: 'connected'
+          }
+        })
       }
-    })
+      
+      return res.json({
+        success: false,
+        message: 'QR code not available yet',
+        data: { 
+          clientId,
+          qrCode: null,
+          status: 'waiting_for_qr'
+        }
+      })
+    }
 
     res.json({
       success: true,
-      message: 'Active clients retrieved successfully',
-      data: { clients: clientsWithStatus }
+      message: 'QR code retrieved successfully',
+      data: { 
+        clientId,
+        qrCode,
+        status: 'qr_available'
+      }
     })
   } catch (error) {
-    throw new AppError(`Failed to get clients: ${error}`, 500)
+    next(new AppError(`Failed to get QR code: ${error}`, 500))
   }
 })
 
+/**
+ * @route   POST /api/whatsapp/logout/:clientId
+ * @desc    Reset a specific client (close and clear)
+ * @access  Public
+ */
+router.post('/logout/:clientId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { clientId } = req.params
+
+    if (!clientId) {
+      throw new AppError('clientId is required', 400)
+    }
+
+    // Check if client exists
+    if (!whatsappService.getActiveClients().includes(clientId)) {
+      throw new AppError(`Client ${clientId} not found`, 404)
+    }
+
+    // Close the client
+    await whatsappService.logout(clientId)
+
+    res.json({
+      success: true,
+      message: `Client ${clientId} reset successfully`,
+      data: { 
+        status: "LOGGED OUT"
+      }
+    })
+  } catch (error) {
+    next(new AppError(`Failed to reset client: ${error}`, 500))
+  }
+})
+
+/**
+ * @route   POST /api/whatsapp/send
+ * @desc    Send text message, file, or both to a phone number (FormData)
+ * @access  Public
+ */
+router.post('/send', upload.single('file'), validateSendMessage, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { clientId, phone, text } = req.body
+    const file = req.file
+
+    console.log('file', file)
+    console.log('text', text)
+    console.log('clientId', clientId)
+    console.log('phone', phone)  
+
+    // Check if client exists
+    if (!whatsappService.getActiveClients().includes(clientId)) {
+      throw new AppError(`Client ${clientId} not found`, 404)
+    }
+
+    // Send message or file (not both)
+    if (file) {
+      // Send file with message as caption
+      const fileBlob = new Blob([file.buffer], { type: file.mimetype })
+      await whatsappService.sendFile(clientId, phone, fileBlob, file.originalname, file.mimetype, text)
+    } else if (text) {
+      // Send text message only if no file
+      await whatsappService.sendText(clientId, phone, text)
+    }
+
+    res.json({
+      success: true,
+      message: 'Message sent successfully',
+      data: {
+        clientId,
+        phone,
+        message: text || null,
+        file: file ? {
+          filename: file.originalname,
+          type: file.mimetype,
+          size: file.size
+        } : null
+      }
+    })
+  } catch (error) {
+    next(new AppError(`Failed to send message: ${error}`, 500))
+  }
+})
 
 export default router

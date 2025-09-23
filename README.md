@@ -1,75 +1,82 @@
 # WhatsApp Business Bot API
 
-A production-ready Node.js TypeScript API for WhatsApp Business automation with multi-client support, specifically designed for water delivery services.
+A comprehensive Node.js TypeScript API for WhatsApp Business automation with multi-client support, file uploads, and session management.
 
-## 🚀 Quick Start
+## 🚀 Features
 
-### 1. Installation
+- **Multi-Client Support**: Manage multiple WhatsApp accounts simultaneously
+- **File Upload**: Send text messages, files, or both using FormData
+- **Session Management**: Persistent sessions with MongoDB support
+- **QR Code Authentication**: Secure login with QR code scanning
+- **Phone Number Validation**: Built-in Pakistani phone number validation
+- **Real-time Status**: Check client connection status and QR codes
+- **Error Handling**: Comprehensive error handling and logging
 
-```bash
-# Install dependencies
-npm install
+## 📋 Prerequisites
 
-# Copy environment file
-cp env.example .env
+- Node.js 18+ 
+- TypeScript 5.0+
+- MongoDB (for session persistence)
+- WhatsApp account
 
-# Start the API server
-npm run api:dev
+## 🛠️ Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd whatsapp-business-bot
+   ```
+
+2. **Install dependencies**
+   ```bash
+   yarn install
+   # or
+   npm install
+   ```
+
+3. **Environment Setup**
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Configure your `.env` file:
+   ```env
+   PORT=3000
+   NODE_ENV=development
+   MONGODB_URI=mongodb://localhost:27017/whatsapp-sessions
+   ```
+
+4. **Build and Run**
+   ```bash
+   # Development
+   yarn dev
+   
+   # Production
+   yarn build
+   yarn start
+   ```
+
+## 📚 API Documentation
+
+### Base URL
+```
+http://localhost:3000/api
 ```
 
-### 2. Multi-Client WhatsApp Login
+### Authentication
+All endpoints require a `clientId` to identify which WhatsApp account to use.
 
-1. **Initialize WhatsApp for a specific client:**
-   ```bash
-   curl -X POST http://localhost:3000/api/whatsapp/login \
-     -H "Content-Type: application/json" \
-     -d '{"clientId": "user-1"}'
-   ```
+---
 
-2. **Scan the QR code** with your WhatsApp mobile app:
-   - Open WhatsApp → Settings → Linked Devices → Link a Device
-   - Scan the QR code from the API response
+## 🔐 WhatsApp Authentication
 
-3. **Check connection status:**
-   ```bash
-   curl -X GET "http://localhost:3000/api/whatsapp/status?clientId=user-1"
-   ```
+### 1. Initialize WhatsApp Client
+**POST** `/api/whatsapp/login`
 
-4. **Get all active clients:**
-   ```bash
-   curl -X GET http://localhost:3000/api/whatsapp/clients
-   ```
+Initialize a WhatsApp client and get QR code for authentication.
 
-## 📋 API Endpoints
-
-### WhatsApp Management
-- `POST /api/whatsapp/login` - Initialize WhatsApp and get QR code for specific client
-- `GET /api/whatsapp/status` - Get WhatsApp connection status for specific client
-- `GET /api/whatsapp/clients` - Get all active clients
-- `POST /api/whatsapp/check-registration` - Check if phone number is registered
-- `POST /api/whatsapp/bulk-check-registration` - Check multiple phone numbers
-
-### Delivery Operations
-- `POST /api/delivery/confirm` - Send delivery confirmation message
-
-### Notifications
-- `POST /api/notifications/announcement` - Send service announcement
-- `POST /api/notifications/delivery-delay` - Send delivery delay notification
-- `POST /api/notifications/service-resumption` - Send service resumption notification
-- `POST /api/notifications/emergency` - Send emergency notification
-- `POST /api/notifications/weather-alert` - Send weather alert
-
-### Invoice Management
-- `POST /api/invoices/send` - Send invoice PDF
-- `POST /api/invoices/payment-reminder` - Send payment reminder with invoice
-
-## 🧪 Postman Testing
-
-### 1. WhatsApp Login
-```http
-POST http://localhost:3000/api/whatsapp/login
-Content-Type: application/json
-
+**Request Body:**
+```json
 {
   "clientId": "user-1"
 }
@@ -88,10 +95,76 @@ Content-Type: application/json
 }
 ```
 
-### 2. Check WhatsApp Status
-```http
-GET http://localhost:3000/api/whatsapp/status?clientId=user-1
+**Example cURL:**
+```bash
+curl -X POST http://localhost:3000/api/whatsapp/login \
+  -H "Content-Type: application/json" \
+  -d '{"clientId": "user-1"}'
 ```
+
+---
+
+### 2. Get QR Code (Polling)
+**GET** `/api/whatsapp/qr/:clientId`
+
+Get the current QR code for a specific client. Use this for polling.
+
+**URL Parameters:**
+- `clientId` (string): Unique client identifier
+
+**Response (QR Available):**
+```json
+{
+  "success": true,
+  "message": "QR code retrieved successfully",
+  "data": {
+    "clientId": "user-1",
+    "qrCode": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+    "status": "qr_available"
+  }
+}
+```
+
+**Response (Already Connected):**
+```json
+{
+  "success": true,
+  "message": "Client is already connected",
+  "data": {
+    "clientId": "user-1",
+    "qrCode": null,
+    "status": "connected"
+  }
+}
+```
+
+**Response (No QR Available):**
+```json
+{
+  "success": false,
+  "message": "QR code not available yet",
+  "data": {
+    "clientId": "user-1",
+    "qrCode": null,
+    "status": "waiting_for_qr"
+  }
+}
+```
+
+**Example cURL:**
+```bash
+curl -X GET http://localhost:3000/api/whatsapp/qr/user-1
+```
+
+---
+
+### 3. Check Client Status
+**GET** `/api/whatsapp/status?clientId=:clientId`
+
+Get the current status of a WhatsApp client.
+
+**Query Parameters:**
+- `clientId` (string): Unique client identifier
 
 **Response:**
 ```json
@@ -100,113 +173,185 @@ GET http://localhost:3000/api/whatsapp/status?clientId=user-1
   "message": "Status retrieved successfully",
   "data": {
     "clientId": "user-1",
-    "status": "CONNECTED",
-    "isReady": true,
-    "isInitialized": true
+    "status": "CONNECTED"
   }
 }
 ```
 
-### 3. Get All Active Clients
-```http
-GET http://localhost:3000/api/whatsapp/clients
+**Possible Status Values:**
+- `CONNECTED`: Client is ready to send messages
+- `OPENING`: Client is connecting
+- `PAIRING`: Waiting for QR code scan
+- `UNPAIRED`: Not authenticated
+- `Not Initialized`: Client doesn't exist
+
+**Example cURL:**
+```bash
+curl -X GET "http://localhost:3000/api/whatsapp/status?clientId=user-1"
 ```
+
+---
+
+### 4. Logout Client
+**POST** `/api/whatsapp/logout/:clientId`
+
+Logout and reset a specific WhatsApp client.
+
+**URL Parameters:**
+- `clientId` (string): Unique client identifier
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Active clients retrieved successfully",
+  "message": "Client user-1 reset successfully",
   "data": {
-    "clients": [
-      {
-        "clientId": "user-1",
-        "isReady": true,
-        "isInitialized": true
-      },
-      {
-        "clientId": "user-2",
-        "isReady": false,
-        "isInitialized": true
-      }
-    ]
+    "status": "LOGGED OUT"
   }
 }
 ```
 
-### 4. Send Delivery Confirmation
-```http
-POST http://localhost:3000/api/delivery/confirm
-Content-Type: application/json
+**Example cURL:**
+```bash
+curl -X POST http://localhost:3000/api/whatsapp/logout/user-1
+```
 
-{
-  "clientId": "user-1",
-  "customerId": "1",
-  "bottlesDelivered": 2,
-  "emptyBottlesCollected": 3,
-  "totalAmount": 100,
-  "deliveryPerson": "Muhammad Hassan",
-  "notes": "Regular delivery"
-}
+---
+
+## 📱 Messaging
+
+### 5. Send Message or File
+**POST** `/api/whatsapp/send`
+
+Send text message, file, or both to a phone number using FormData.
+
+**Content-Type:** `multipart/form-data`
+
+**Form Data Fields:**
+- `clientId` (string): Unique client identifier
+- `phone` (string): Phone number in format `+92XXXXXXXXXX`
+- `text` (string, optional): Text message to send
+- `file` (File, optional): File to send
+
+**Note:** Either `text` or `file` must be provided. If both are provided, only the file will be sent with the text as caption.
+
+#### Send Text Message Only
+
+**Form Data:**
+```
+clientId: user-1
+phone: +923001234567
+text: Hello! This is a test message.
 ```
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Delivery confirmation sent successfully",
-  "data": {
-    "clientId": "user-1",
-    "deliveryId": "DEL-1703123456789"
-  }
-}
-```
-
-### 5. Send Service Announcement
-```http
-POST http://localhost:3000/api/notifications/announcement
-Content-Type: application/json
-
-{
-  "clientId": "user-1",
-  "title": "New Delivery Schedule",
-  "message": "Starting next week, we will be delivering on Tuesdays and Fridays instead of Mondays and Thursdays.",
-  "customerIds": ["1", "2", "3"]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Announcement sent to 3 customers",
+  "message": "Message sent successfully",
   "data": {
     "clientId": "user-1",
-    "title": "New Delivery Schedule",
-    "message": "Starting next week, we will be delivering on Tuesdays and Fridays instead of Mondays and Thursdays.",
-    "targetArea": null
+    "phone": "+923001234567",
+    "message": "Hello! This is a test message.",
+    "file": null
   }
 }
 ```
 
-### 6. Send Invoice
-```http
-POST http://localhost:3000/api/invoices/send
-Content-Type: application/json
+**Example cURL:**
+```bash
+curl -X POST http://localhost:3000/api/whatsapp/send \
+  -F "clientId=user-1" \
+  -F "phone=+923001234567" \
+  -F "text=Hello! This is a test message."
+```
 
+#### Send File Only
+
+**Form Data:**
+```
+clientId: user-1
+phone: +923001234567
+file: [PDF file]
+```
+
+**Response:**
+```json
 {
-  "clientId": "user-1",
-  "customerId": "1",
-  "totalAmount": 100,
-  "items": [
-    {
-      "description": "Water Delivery - 2 bottles",
-      "quantity": 2,
-      "rate": 50,
-      "amount": 100
+  "success": true,
+  "message": "Message sent successfully",
+  "data": {
+    "clientId": "user-1",
+    "phone": "+923001234567",
+    "message": null,
+    "file": {
+      "filename": "document.pdf",
+      "type": "application/pdf",
+      "size": 245760
     }
-  ],
-  "pdfUrl": "https://example.com/invoice.pdf"
+  }
+}
+```
+
+**Example cURL:**
+```bash
+curl -X POST http://localhost:3000/api/whatsapp/send \
+  -F "clientId=user-1" \
+  -F "phone=+923001234567" \
+  -F "file=@/path/to/document.pdf"
+```
+
+#### Send File with Caption
+
+**Form Data:**
+```
+clientId: user-1
+phone: +923001234567
+text: Here's your invoice!
+file: [PDF file]
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Message sent successfully",
+  "data": {
+    "clientId": "user-1",
+    "phone": "+923001234567",
+    "message": "Here's your invoice!",
+    "file": {
+      "filename": "invoice.pdf",
+      "type": "application/pdf",
+      "size": 245760
+    }
+  }
+}
+```
+
+**Example cURL:**
+```bash
+curl -X POST http://localhost:3000/api/whatsapp/send \
+  -F "clientId=user-1" \
+  -F "phone=+923001234567" \
+  -F "text=Here's your invoice!" \
+  -F "file=@/path/to/invoice.pdf"
+```
+
+---
+
+## 📞 Phone Number Validation
+
+### 6. Check Registration
+**POST** `/api/whatsapp/check-registration`
+
+Check if a phone number is registered on WhatsApp.
+
+**Request Body:**
+```json
+{
+  "clientId": "user-1",
+  "phone": "+923001234567"
 }
 ```
 
@@ -214,131 +359,228 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "message": "Invoice sent successfully",
+  "message": "Registration status checked",
   "data": {
     "clientId": "user-1",
-    "invoiceId": "INV-1703123456789"
+    "phone": "+923001234567",
+    "isRegistered": true
   }
 }
 ```
 
-## 🔧 Environment Configuration
-
-Create a `.env` file with the following variables:
-
-```env
-# Server Configuration
-PORT=3000
-NODE_ENV=development
-
-# WhatsApp Configuration
-ADMIN_PHONE=+923161137297
-
-# CORS Configuration
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://localhost:3002
-
-# Invoice Configuration
-URL=http://localhost:3000
+**Example cURL:**
+```bash
+curl -X POST http://localhost:3000/api/whatsapp/check-registration \
+  -H "Content-Type: application/json" \
+  -d '{"clientId": "user-1", "phone": "+923001234567"}'
 ```
 
-## 🏗️ Project Structure
+---
 
+## 🏥 Health Check
+
+### 7. API Health Check
+**GET** `/api/health`
+
+Check if the API is running.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "WhatsApp Business Bot API is running",
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "version": "1.0.0"
+}
+```
+
+**Example cURL:**
+```bash
+curl -X GET http://localhost:3000/api/health
+```
+
+---
+
+## 🔧 Configuration
+
+### Environment Variables
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `PORT` | Server port | `3000` | No |
+| `NODE_ENV` | Environment mode | `development` | No |
+| `MONGODB_URI` | MongoDB connection string | - | Yes |
+
+### Phone Number Format
+
+All phone numbers must be in Pakistani format:
+- **Format:** `+92XXXXXXXXXX`
+- **Example:** `+923001234567`
+- **Length:** 13 characters total
+
+### File Upload Limits
+
+- **Maximum file size:** 50MB
+- **Supported formats:** All file types
+- **Storage:** In-memory processing
+
+---
+
+## 🚨 Error Handling
+
+### Common Error Responses
+
+**400 Bad Request:**
+```json
+{
+  "success": false,
+  "message": "clientId is required",
+  "error": "Bad Request"
+}
+```
+
+**404 Not Found:**
+```json
+{
+  "success": false,
+  "message": "Client user-1 not found",
+  "error": "Not Found"
+}
+```
+
+**500 Internal Server Error:**
+```json
+{
+  "success": false,
+  "message": "Failed to send message: Connection timeout",
+  "error": "Internal Server Error"
+}
+```
+
+---
+
+## 📝 Usage Examples
+
+### JavaScript/Node.js
+
+```javascript
+// Send text message
+const formData = new FormData()
+formData.append('clientId', 'user-1')
+formData.append('phone', '+923001234567')
+formData.append('text', 'Hello from WhatsApp Bot!')
+
+const response = await fetch('http://localhost:3000/api/whatsapp/send', {
+  method: 'POST',
+  body: formData
+})
+
+const result = await response.json()
+console.log(result)
+```
+
+### Python
+
+```python
+import requests
+
+# Send file with caption
+files = {'file': open('document.pdf', 'rb')}
+data = {
+    'clientId': 'user-1',
+    'phone': '+923001234567',
+    'text': 'Here is your document!'
+}
+
+response = requests.post(
+    'http://localhost:3000/api/whatsapp/send',
+    files=files,
+    data=data
+)
+
+print(response.json())
+```
+
+### PHP
+
+```php
+<?php
+// Send text message
+$data = [
+    'clientId' => 'user-1',
+    'phone' => '+923001234567',
+    'text' => 'Hello from PHP!'
+];
+
+$ch = curl_init();
+curl_setopt($ch, CURLOPT_URL, 'http://localhost:3000/api/whatsapp/send');
+curl_setopt($ch, CURLOPT_POST, 1);
+curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+$response = curl_exec($ch);
+curl_close($ch);
+
+echo $response;
+?>
+```
+
+---
+
+## 🛠️ Development
+
+### Project Structure
 ```
 src/
 ├── api/
 │   ├── middleware/
 │   │   ├── errorHandler.ts
 │   │   └── validation.ts
-│   ├── routes/
-│   │   ├── delivery.routes.ts
-│   │   ├── notification.routes.ts
-│   │   ├── invoice.routes.ts
-│   │   ├── whatsapp.routes.ts
-│   │   └── index.ts
-│   └── server.ts
+│   └── routes/
+│       ├── index.ts
+│       └── whatsapp.routes.ts
 ├── services/
 │   ├── whatsapp.service.ts
-│   ├── delivery.service.ts
-│   ├── notification.service.ts
-│   ├── invoice.service.ts
 │   └── index.ts
-├── templates/
-│   └── messageTemplates.ts
 ├── types/
 │   └── business.ts
-└── main.ts
+└── server.ts
 ```
 
-## 🚀 Production Deployment
-
-### 1. Build the project
-```bash
-npm run api:build
-```
-
-### 2. Start production server
-```bash
-npm start
-```
-
-### 3. Environment Variables for Production
-```env
-NODE_ENV=production
-PORT=3000
-JWT_SECRET=your-super-secret-jwt-key
-ALLOWED_ORIGINS=https://yourdomain.com
-```
-
-## 📱 Multi-Client WhatsApp Integration
-
-The API uses `whatsapp-web.js` library with multi-client support:
-- **Multiple Users**: Each user gets their own WhatsApp session with unique `clientId`
-- **Session Management**: Each client's session is stored separately using `LocalAuth({ clientId })`
-- **QR Code Authentication**: Each client needs to scan their own QR code
-- **Independent Operations**: Users can send messages independently without affecting others
-- **Session Persistence**: Sessions are saved locally and persist across server restarts
-- **Bulk Messaging**: Supports sending text messages, images, and PDFs with rate limiting
-- **Client Status Tracking**: Real-time status monitoring for each client
-
-## 🔒 Security Features
-
-- Rate limiting on all endpoints
-- CORS protection
-- Helmet security headers
-- Input validation
-- Error handling
-
-## 📊 Monitoring
-
-- Health check endpoint: `GET /api/health`
-- API documentation: `GET /`
-- Request logging with Morgan
-- Error tracking
-
-## 🛠️ Development
+### Available Scripts
 
 ```bash
-# Development mode with auto-reload
-npm run api:dev
+# Development with hot reload
+yarn dev
 
 # Build TypeScript
-npm run build
+yarn build
 
-# Run tests (if available)
-npm test
+# Start production server
+yarn start
+
+# Type checking
+yarn tsc --noEmit
 ```
 
-## 📝 Notes
+---
 
-- **Multi-Client Sessions**: Each client's WhatsApp session is stored in `.wwebjs_auth/` directory with their unique `clientId`
-- **QR Code Display**: QR codes are generated as base64 data URLs for easy display in admin panels
-- **Client Management**: Use unique `clientId` for each user (e.g., "user-1", "user-2", "brother-account")
-- **Session Persistence**: Sessions persist across server restarts - users don't need to re-scan QR codes
-- **Message Templates**: All message templates are centralized in `src/templates/messageTemplates.ts`
-- **Phone Format**: Phone numbers should be in international format (+923161137297)
-- **Rate Limiting**: Prevents spam and ensures WhatsApp compliance
-- **Error Handling**: If client is not ready, API returns clear error message to call `/api/whatsapp/login` first
+## 📄 License
 
-## 🤝 Support
+MIT License - see LICENSE file for details.
 
-For issues and questions, please check the API documentation at `http://localhost:3000/` when the server is running.
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+---
+
+## 📞 Support
+
+For support and questions, please open an issue in the repository.

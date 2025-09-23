@@ -1,13 +1,9 @@
 import { Router } from 'express'
-import deliveryRoutes from './delivery.routes'
-import invoiceRoutes from './invoice.routes'
 import whatsappRoutes from './whatsapp.routes'
 
 const router = Router()
 
 // API Routes
-router.use('/delivery', deliveryRoutes)
-router.use('/invoices', invoiceRoutes)
 router.use('/whatsapp', whatsappRoutes)
 
 // Health check endpoint

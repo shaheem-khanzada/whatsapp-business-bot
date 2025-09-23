@@ -28,10 +28,10 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000', 'http://localhost:3001'],
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  // allowedHeaders: ['Content-Type', 'Authorization']
 }))
 
 // Rate limiting
@@ -87,13 +87,6 @@ app.get('/', (req, res) => {
       delivery: {
         'POST /api/delivery/confirm': 'Send delivery confirmation'
       },
-      notifications: {
-        'POST /api/notifications/announcement': 'Send service announcement',
-        'POST /api/notifications/delivery-delay': 'Send delivery delay notification',
-        'POST /api/notifications/service-resumption': 'Send service resumption notification',
-        'POST /api/notifications/emergency': 'Send emergency notification',
-        'POST /api/notifications/weather-alert': 'Send weather alert'
-      },
       invoices: {
         'POST /api/invoices/send': 'Send invoice PDF',
         'POST /api/invoices/payment-reminder': 'Send payment reminder with invoice'
@@ -111,6 +104,17 @@ app.get('/', (req, res) => {
 // Error handling middleware
 app.use(notFound)
 app.use(errorHandler)
+
+// Global error handlers to prevent crashes
+process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+  // console.error('Unhandled Rejection at:', promise, 'reason:', reason)
+  // Don't exit the process, just log the error
+})
+
+process.on('uncaughtException', (error: Error) => {
+  // console.error('Uncaught Exception:', error)
+  // Don't exit the process, just log the error
+})
 
 // Start server
 app.listen(PORT, () => {

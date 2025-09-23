@@ -1,2 +1,2 @@
-// Export global instances
-export { whatsappService, deliveryService, invoiceService } from './global'
+// Export WhatsApp service
+export { WhatsAppService } from './whatsapp.service'
