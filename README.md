@@ -1,23 +1,24 @@
 # WhatsApp Business Bot API
 
-A comprehensive Node.js TypeScript API for WhatsApp Business automation with multi-client support, file uploads, and session management.
+A robust, production-ready WhatsApp Business Bot API built with Node.js, Express, and TypeScript. This API provides comprehensive WhatsApp client management with MongoDB session persistence, real-time WebSocket communication, and multi-client support.
 
 ## 🚀 Features
 
-- **Multi-Client Support**: Manage multiple WhatsApp accounts simultaneously
-- **File Upload**: Send text messages, files, or both using FormData
-- **Session Management**: Persistent sessions with MongoDB support
-- **QR Code Authentication**: Secure login with QR code scanning
-- **Phone Number Validation**: Built-in Pakistani phone number validation
-- **Real-time Status**: Check client connection status and QR codes
-- **Error Handling**: Comprehensive error handling and logging
+- **Multi-Client Support** - Manage multiple WhatsApp client instances simultaneously
+- **MongoDB Session Persistence** - Automatic session storage and restoration
+- **Real-time WebSocket Communication** - Live QR code and status updates
+- **Robust Error Handling** - Comprehensive error management with custom error classes
+- **TypeScript Support** - Full type safety and IntelliSense
+- **File Upload Support** - Send text messages, files, or both
+- **Phone Number Validation** - Built-in WhatsApp phone number verification
+- **Automatic Cleanup** - Proper resource management and cleanup
+- **Production Ready** - Optimized for Docker and production environments
 
 ## 📋 Prerequisites
 
 - Node.js 18+ 
-- TypeScript 5.0+
-- MongoDB (for session persistence)
-- WhatsApp account
+- MongoDB 4.4+
+- Yarn package manager
 
 ## 🛠️ Installation
 
@@ -30,8 +31,6 @@ A comprehensive Node.js TypeScript API for WhatsApp Business automation with mul
 2. **Install dependencies**
    ```bash
    yarn install
-   # or
-   npm install
    ```
 
 3. **Environment Setup**
@@ -43,16 +42,16 @@ A comprehensive Node.js TypeScript API for WhatsApp Business automation with mul
    ```env
    PORT=3000
    NODE_ENV=development
-   MONGODB_URI=mongodb://localhost:27017/whatsapp-sessions
+   MONGODB_URI=mongodb://localhost:27017/whatsapp-bot
    ```
 
-4. **Build and Run**
+4. **Build the project**
    ```bash
-   # Development
-   yarn dev
-   
-   # Production
    yarn build
+   ```
+
+5. **Start the server**
+   ```bash
    yarn start
    ```
 
@@ -60,20 +59,21 @@ A comprehensive Node.js TypeScript API for WhatsApp Business automation with mul
 
 ### Base URL
 ```
-http://localhost:3000/api
+http://localhost:3000/api/whatsapp
 ```
 
 ### Authentication
-All endpoints require a `clientId` to identify which WhatsApp account to use.
+No authentication required for this API.
 
 ---
 
-## 🔐 WhatsApp Authentication
+## 🔗 API Endpoints
 
 ### 1. Initialize WhatsApp Client
-**POST** `/api/whatsapp/login`
 
-Initialize a WhatsApp client and get QR code for authentication.
+**POST** `/login`
+
+Initialize a new WhatsApp client and wait for it to be ready.
 
 **Request Body:**
 ```json
@@ -86,33 +86,32 @@ Initialize a WhatsApp client and get QR code for authentication.
 ```json
 {
   "success": true,
-  "message": "WhatsApp initialized successfully for client user-1. Scan the QR code to connect.",
+  "message": "WhatsApp client 'user-1' is ready and connected.",
   "data": {
     "clientId": "user-1",
-    "qrCode": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
-    "status": "waiting_for_scan"
+    "status": "CONNECTED",
+    "timestamp": "2024-01-15T10:30:00.000Z"
   }
 }
 ```
 
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/whatsapp/login \
-  -H "Content-Type: application/json" \
-  -d '{"clientId": "user-1"}'
-```
+**Status Codes:**
+- `200` - Client initialized successfully
+- `400` - Invalid client ID
+- `500` - Initialization failed
 
 ---
 
-### 2. Get QR Code (Polling)
-**GET** `/api/whatsapp/qr/:clientId`
+### 2. Get QR Code
 
-Get the current QR code for a specific client. Use this for polling.
+**GET** `/qr/:clientId`
 
-**URL Parameters:**
-- `clientId` (string): Unique client identifier
+Get the current QR code for a specific client.
 
-**Response (QR Available):**
+**Parameters:**
+- `clientId` (string) - The client identifier
+
+**Response:**
 ```json
 {
   "success": true,
@@ -120,237 +119,21 @@ Get the current QR code for a specific client. Use this for polling.
   "data": {
     "clientId": "user-1",
     "qrCode": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
-    "status": "qr_available"
+    "timestamp": "2024-01-15T10:30:00.000Z"
   }
 }
 ```
 
-**Response (Already Connected):**
-```json
-{
-  "success": true,
-  "message": "Client is already connected",
-  "data": {
-    "clientId": "user-1",
-    "qrCode": null,
-    "status": "connected"
-  }
-}
-```
-
-**Response (No QR Available):**
-```json
-{
-  "success": false,
-  "message": "QR code not available yet",
-  "data": {
-    "clientId": "user-1",
-    "qrCode": null,
-    "status": "waiting_for_qr"
-  }
-}
-```
-
-**Example cURL:**
-```bash
-curl -X GET http://localhost:3000/api/whatsapp/qr/user-1
-```
+**Status Codes:**
+- `200` - QR code retrieved successfully
+- `404` - Client not found
+- `422` - Client already connected
 
 ---
 
-### 3. Check Client Status
-**GET** `/api/whatsapp/status?clientId=:clientId`
+### 3. Check Phone Registration
 
-Get the current status of a WhatsApp client.
-
-**Query Parameters:**
-- `clientId` (string): Unique client identifier
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Status retrieved successfully",
-  "data": {
-    "clientId": "user-1",
-    "status": "CONNECTED"
-  }
-}
-```
-
-**Possible Status Values:**
-- `CONNECTED`: Client is connected and ready to send messages
-- `CONNECTING`: Client is opening browser and connecting to WhatsApp
-- `AUTHENTICATING`: Waiting for QR code scan or authentication
-- `INITIALIZING`: Client created but not launched yet
-- `DISCONNECTED`: Client is not paired, logged out, or idle
-- `NOT_INITIALIZED`: Client doesn't exist in the system
-- `TIMEOUT`: Connection timed out
-- `CONFLICT`: Multiple sessions detected (only one allowed)
-- `BLOCKED`: Account is blocked (proxy, SMB, or terms of service)
-- `DEPRECATED`: WhatsApp Web version is outdated
-- `ERROR`: An error occurred while getting status
-- `UNKNOWN`: Unknown or unrecognized status
-
-**Example cURL:**
-```bash
-curl -X GET "http://localhost:3000/api/whatsapp/status?clientId=user-1"
-```
-
----
-
-### 4. Logout Client
-**POST** `/api/whatsapp/logout/:clientId`
-
-Logout and reset a specific WhatsApp client.
-
-**URL Parameters:**
-- `clientId` (string): Unique client identifier
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Client user-1 reset successfully",
-  "data": {
-    "status": "LOGGED OUT"
-  }
-}
-```
-
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/whatsapp/logout/user-1
-```
-
----
-
-## 📱 Messaging
-
-### 5. Send Message or File
-**POST** `/api/whatsapp/send`
-
-Send text message, file, or both to a phone number using FormData.
-
-**Content-Type:** `multipart/form-data`
-
-**Form Data Fields:**
-- `clientId` (string): Unique client identifier
-- `phone` (string): Phone number in format `+92XXXXXXXXXX`
-- `text` (string, optional): Text message to send
-- `file` (File, optional): File to send
-
-**Note:** Either `text` or `file` must be provided. If both are provided, only the file will be sent with the text as caption.
-
-#### Send Text Message Only
-
-**Form Data:**
-```
-clientId: user-1
-phone: +923001234567
-text: Hello! This is a test message.
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Message sent successfully",
-  "data": {
-    "clientId": "user-1",
-    "phone": "+923001234567",
-    "message": "Hello! This is a test message.",
-    "file": null
-  }
-}
-```
-
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/whatsapp/send \
-  -F "clientId=user-1" \
-  -F "phone=+923001234567" \
-  -F "text=Hello! This is a test message."
-```
-
-#### Send File Only
-
-**Form Data:**
-```
-clientId: user-1
-phone: +923001234567
-file: [PDF file]
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Message sent successfully",
-  "data": {
-    "clientId": "user-1",
-    "phone": "+923001234567",
-    "message": null,
-    "file": {
-      "filename": "document.pdf",
-      "type": "application/pdf",
-      "size": 245760
-    }
-  }
-}
-```
-
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/whatsapp/send \
-  -F "clientId=user-1" \
-  -F "phone=+923001234567" \
-  -F "file=@/path/to/document.pdf"
-```
-
-#### Send File with Caption
-
-**Form Data:**
-```
-clientId: user-1
-phone: +923001234567
-text: Here's your invoice!
-file: [PDF file]
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Message sent successfully",
-  "data": {
-    "clientId": "user-1",
-    "phone": "+923001234567",
-    "message": "Here's your invoice!",
-    "file": {
-      "filename": "invoice.pdf",
-      "type": "application/pdf",
-      "size": 245760
-    }
-  }
-}
-```
-
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/whatsapp/send \
-  -F "clientId=user-1" \
-  -F "phone=+923001234567" \
-  -F "text=Here's your invoice!" \
-  -F "file=@/path/to/invoice.pdf"
-```
-
----
-
-## 📞 Phone Number Validation
-
-### 6. Check Registration
-**POST** `/api/whatsapp/check-registration`
+**POST** `/check-registration`
 
 Check if a phone number is registered on WhatsApp.
 
@@ -366,45 +149,298 @@ Check if a phone number is registered on WhatsApp.
 ```json
 {
   "success": true,
-  "message": "Registration status checked",
+  "message": "Phone number registration status checked",
   "data": {
     "clientId": "user-1",
     "phone": "+923001234567",
-    "isRegistered": true
+    "isRegistered": true,
+    "timestamp": "2024-01-15T10:30:00.000Z"
   }
 }
 ```
 
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/whatsapp/check-registration \
-  -H "Content-Type: application/json" \
-  -d '{"clientId": "user-1", "phone": "+923001234567"}'
-```
+**Status Codes:**
+- `200` - Registration status checked
+- `400` - Invalid phone number format
+- `404` - Client not found
+- `422` - Client not ready
 
 ---
 
-## 🏥 Health Check
+### 4. Send Message
 
-### 7. API Health Check
-**GET** `/api/health`
+**POST** `/send`
 
-Check if the API is running.
+Send a text message, file, or both to a phone number.
+
+**Request Body (Text Message):**
+```json
+{
+  "clientId": "user-1",
+  "phone": "+923001234567",
+  "message": "Hello from WhatsApp Bot!"
+}
+```
+
+**Request Body (File Upload - FormData):**
+```
+clientId: user-1
+phone: +923001234567
+message: Here's your document!
+file: [File object]
+```
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "WhatsApp Business Bot API is running",
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "version": "1.0.0"
+  "message": "Text message sent successfully to +923001234567",
+  "data": {
+    "clientId": "user-1",
+    "phone": "+923001234567",
+    "message": "Hello from WhatsApp Bot!",
+    "file": null,
+    "timestamp": "2024-01-15T10:30:00.000Z"
+  }
 }
 ```
 
-**Example cURL:**
-```bash
-curl -X GET http://localhost:3000/api/health
+**File Response:**
+```json
+{
+  "success": true,
+  "message": "File sent successfully to +923001234567",
+  "data": {
+    "clientId": "user-1",
+    "phone": "+923001234567",
+    "message": "Here's your document!",
+    "file": {
+      "filename": "document.pdf",
+      "type": "application/pdf",
+      "size": 1024000
+    },
+    "timestamp": "2024-01-15T10:30:00.000Z"
+  }
+}
 ```
+
+**Status Codes:**
+- `200` - Message sent successfully
+- `400` - Invalid request data
+- `404` - Client not found
+- `422` - Client not ready
+
+---
+
+### 5. Get Client Status
+
+**GET** `/status/:clientId`
+
+Get the current status of a specific client.
+
+**Parameters:**
+- `clientId` (string) - The client identifier
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Client status retrieved successfully",
+  "data": {
+    "clientId": "user-1",
+    "status": "CONNECTED",
+    "timestamp": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+**Possible Status Values:**
+- `NOT_INITIALIZED` - Client not created
+- `PAIRING` - Client created, waiting for QR
+- `AWAITING_SCAN` - QR code generated, waiting for scan
+- `LOADING` - WhatsApp is initializing
+- `CONNECTED` - Successfully connected
+- `DISCONNECTED` - Connection lost
+- `AUTH_FAILED` - Authentication failed
+- `ERROR` - General error
+- `TIMEOUT` - Operation timed out
+
+---
+
+### 6. Logout Client
+
+**POST** `/logout/:clientId`
+
+Logout and reset a specific client.
+
+**Parameters:**
+- `clientId` (string) - The client identifier
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "WhatsApp client 'user-1' logged out successfully",
+  "data": {
+    "clientId": "user-1",
+    "timestamp": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+**Status Codes:**
+- `200` - Client logged out successfully
+- `400` - Client ID required
+- `404` - Client not found
+- `422` - Client not connected
+
+---
+
+### 7. Force Close Client
+
+**POST** `/force-close/:clientId`
+
+Force close a client immediately (emergency cleanup).
+
+**Parameters:**
+- `clientId` (string) - The client identifier
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "WhatsApp client 'user-1' force closed successfully",
+  "data": {
+    "clientId": "user-1",
+    "timestamp": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+**Status Codes:**
+- `200` - Client force closed successfully
+- `400` - Client ID required
+- `500` - Force close failed
+
+---
+
+## 🔌 WebSocket Integration
+
+### Connection
+Connect to the WebSocket server for real-time updates:
+
+```javascript
+const ws = new WebSocket('ws://localhost:3000/ws')
+
+ws.onopen = () => {
+  console.log('Connected to WebSocket')
+}
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data)
+  console.log('Received:', data)
+}
+```
+
+### Message Types
+
+#### 1. QR Code Updates
+```json
+{
+  "type": "qr-code",
+  "clientId": "user-1",
+  "qrCode": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
+
+#### 2. Status Updates
+```json
+{
+  "type": "status-update",
+  "clientId": "user-1",
+  "status": "AWAITING_SCAN",
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
+
+### React Integration Example
+
+```jsx
+import React, { useState, useEffect } from 'react'
+
+function WhatsAppClient({ clientId }) {
+  const [qrCode, setQrCode] = useState(null)
+  const [status, setStatus] = useState('NOT_INITIALIZED')
+  const [ws, setWs] = useState(null)
+
+  useEffect(() => {
+    const websocket = new WebSocket('ws://localhost:3000/ws')
+    
+    websocket.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+      
+      if (data.clientId === clientId) {
+        if (data.type === 'qr-code') {
+          setQrCode(data.qrCode)
+        } else if (data.type === 'status-update') {
+          setStatus(data.status)
+          if (data.status === 'CONNECTED') {
+            setQrCode(null) // Hide QR code when connected
+          }
+        }
+      }
+    }
+    
+    setWs(websocket)
+    
+    return () => websocket.close()
+  }, [clientId])
+
+  const handleLogin = async () => {
+    try {
+      const response = await fetch('/api/whatsapp/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId })
+      })
+      const result = await response.json()
+      console.log('Login result:', result)
+    } catch (error) {
+      console.error('Login failed:', error)
+    }
+  }
+
+  return (
+    <div>
+      <h2>WhatsApp Client: {clientId}</h2>
+      <p>Status: {status}</p>
+      
+      {qrCode && (
+        <div>
+          <p>Scan this QR code with your WhatsApp mobile app:</p>
+          <img src={qrCode} alt="QR Code" />
+        </div>
+      )}
+      
+      {status === 'NOT_INITIALIZED' && (
+        <button onClick={handleLogin}>Initialize Client</button>
+      )}
+    </div>
+  )
+}
+
+export default WhatsAppClient
+```
+
+---
+
+## 📱 Phone Number Format
+
+All phone numbers must be in international format:
+- **Format**: `+92XXXXXXXXXX` (for Pakistan)
+- **Example**: `+923001234567`
+- **Validation**: Automatically validated by the API
 
 ---
 
@@ -415,166 +451,119 @@ curl -X GET http://localhost:3000/api/health
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `PORT` | Server port | `3000` | No |
-| `NODE_ENV` | Environment mode | `development` | No |
+| `NODE_ENV` | Environment | `development` | No |
 | `MONGODB_URI` | MongoDB connection string | - | Yes |
 
-### Phone Number Format
+### Chrome Arguments (Optimized for Performance)
 
-All phone numbers must be in Pakistani format:
-- **Format:** `+92XXXXXXXXXX`
-- **Example:** `+923001234567`
-- **Length:** 13 characters total
-
-### File Upload Limits
-
-- **Maximum file size:** 50MB
-- **Supported formats:** All file types
-- **Storage:** In-memory processing
+The API uses optimized Chrome arguments for better performance:
+- `--no-sandbox`
+- `--disable-setuid-sandbox`
+- `--disable-dev-shm-usage`
+- `--disable-accelerated-2d-canvas`
+- `--no-first-run`
+- `--no-zygote`
+- `--disable-gpu`
+- `--disable-background-timer-throttling`
+- `--disable-backgrounding-occluded-windows`
+- `--disable-renderer-backgrounding`
+- `--disable-features=TranslateUI`
+- `--disable-ipc-flooding-protection`
 
 ---
 
-## 🚨 Error Handling
+## 🚀 Scripts
 
-### Common Error Responses
+```bash
+# Development
+yarn dev          # Start development server with hot reload
+yarn build        # Build TypeScript to JavaScript
+yarn start        # Start production server
 
-**400 Bad Request:**
-```json
-{
-  "success": false,
-  "message": "clientId is required",
-  "error": "Bad Request"
-}
-```
-
-**404 Not Found:**
-```json
-{
-  "success": false,
-  "message": "Client user-1 not found",
-  "error": "Not Found"
-}
-```
-
-**500 Internal Server Error:**
-```json
-{
-  "success": false,
-  "message": "Failed to send message: Connection timeout",
-  "error": "Internal Server Error"
-}
+# Code Quality
+yarn lint         # Run ESLint
+yarn type-check   # Run TypeScript type checking
 ```
 
 ---
 
-## 📝 Usage Examples
+## 🏗️ Architecture
 
-### JavaScript/Node.js
-
-```javascript
-// Send text message
-const formData = new FormData()
-formData.append('clientId', 'user-1')
-formData.append('phone', '+923001234567')
-formData.append('text', 'Hello from WhatsApp Bot!')
-
-const response = await fetch('http://localhost:3000/api/whatsapp/send', {
-  method: 'POST',
-  body: formData
-})
-
-const result = await response.json()
-console.log(result)
-```
-
-### Python
-
-```python
-import requests
-
-# Send file with caption
-files = {'file': open('document.pdf', 'rb')}
-data = {
-    'clientId': 'user-1',
-    'phone': '+923001234567',
-    'text': 'Here is your document!'
-}
-
-response = requests.post(
-    'http://localhost:3000/api/whatsapp/send',
-    files=files,
-    data=data
-)
-
-print(response.json())
-```
-
-### PHP
-
-```php
-<?php
-// Send text message
-$data = [
-    'clientId' => 'user-1',
-    'phone' => '+923001234567',
-    'text' => 'Hello from PHP!'
-];
-
-$ch = curl_init();
-curl_setopt($ch, CURLOPT_URL, 'http://localhost:3000/api/whatsapp/send');
-curl_setopt($ch, CURLOPT_POST, 1);
-curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-
-$response = curl_exec($ch);
-curl_close($ch);
-
-echo $response;
-?>
-```
-
----
-
-## 🛠️ Development
-
-### Project Structure
+### Service Structure
 ```
 src/
 ├── api/
-│   ├── middleware/
-│   │   ├── errorHandler.ts
-│   │   └── validation.ts
-│   └── routes/
-│       ├── index.ts
-│       └── whatsapp.routes.ts
+│   ├── middleware/     # Validation and error handling
+│   └── routes/         # API route definitions
 ├── services/
-│   ├── whatsapp.service.ts
-│   └── index.ts
-├── types/
-│   └── business.ts
-└── server.ts
+│   ├── whatsapp.service.ts    # Core WhatsApp management
+│   ├── websocket.service.ts   # WebSocket communication
+│   └── global.ts              # Global service instances
+└── server.ts          # Main server setup
 ```
 
-### Available Scripts
+### Key Components
 
-```bash
-# Development with hot reload
-yarn dev
-
-# Build TypeScript
-yarn build
-
-# Start production server
-yarn start
-
-# Type checking
-yarn tsc --noEmit
-```
+1. **WhatsAppService** - Core client management
+2. **WebSocketService** - Real-time communication
+3. **Validation Middleware** - Request validation
+4. **Error Handler** - Centralized error management
 
 ---
 
-## 📄 License
+## 🔒 Error Handling
 
-MIT License - see LICENSE file for details.
+The API uses custom error classes for better error management:
+
+- `WhatsAppClientError` - General client errors
+- `WhatsAppTimeoutError` - Operation timeout errors
+- `WhatsAppNotReadyError` - Client not ready errors
+
+All errors include:
+- Descriptive error messages
+- Client ID context
+- Error codes for programmatic handling
+- HTTP status codes
+
+---
+
+## 📊 Performance
+
+### Optimizations
+- **Parallel Operations** - Multiple clients can run simultaneously
+- **Memory Management** - Automatic cleanup of resources
+- **Timeout Handling** - Prevents hanging operations
+- **Chrome Optimization** - Optimized browser arguments
+- **MongoDB Indexing** - Efficient session storage
+
+### Resource Usage
+- **Memory**: ~50MB base + ~20MB per client
+- **CPU**: Low usage with optimized Chrome args
+- **Storage**: Session data stored in MongoDB
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+1. **Client not connecting**
+   - Check MongoDB connection
+   - Verify phone number format
+   - Check Chrome installation
+
+2. **QR code not appearing**
+   - Ensure WebSocket connection is active
+   - Check client initialization
+   - Verify browser permissions
+
+3. **Memory leaks**
+   - Use proper client cleanup
+   - Monitor active client count
+   - Restart server if needed
+
+### Debug Mode
+Set `NODE_ENV=development` for detailed logging.
 
 ---
 
@@ -588,6 +577,19 @@ MIT License - see LICENSE file for details.
 
 ---
 
-## 📞 Support
+## 📄 License
 
-For support and questions, please open an issue in the repository.
+This project is licensed under the MIT License.
+
+---
+
+## 🆘 Support
+
+For support and questions:
+- Create an issue in the repository
+- Check the troubleshooting section
+- Review the API documentation
+
+---
+
+**Built with ❤️ using Node.js, TypeScript, and WhatsApp Web.js**
