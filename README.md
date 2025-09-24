@@ -179,11 +179,18 @@ Get the current status of a WhatsApp client.
 ```
 
 **Possible Status Values:**
-- `CONNECTED`: Client is ready to send messages
-- `OPENING`: Client is connecting
-- `PAIRING`: Waiting for QR code scan
-- `UNPAIRED`: Not authenticated
-- `Not Initialized`: Client doesn't exist
+- `CONNECTED`: Client is connected and ready to send messages
+- `CONNECTING`: Client is opening browser and connecting to WhatsApp
+- `AUTHENTICATING`: Waiting for QR code scan or authentication
+- `INITIALIZING`: Client created but not launched yet
+- `DISCONNECTED`: Client is not paired, logged out, or idle
+- `NOT_INITIALIZED`: Client doesn't exist in the system
+- `TIMEOUT`: Connection timed out
+- `CONFLICT`: Multiple sessions detected (only one allowed)
+- `BLOCKED`: Account is blocked (proxy, SMB, or terms of service)
+- `DEPRECATED`: WhatsApp Web version is outdated
+- `ERROR`: An error occurred while getting status
+- `UNKNOWN`: Unknown or unrecognized status
 
 **Example cURL:**
 ```bash

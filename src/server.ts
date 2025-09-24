@@ -4,15 +4,21 @@ import helmet from 'helmet'
 import morgan from 'morgan'
 import dotenv from 'dotenv'
 import rateLimit from 'express-rate-limit'
+import { createServer } from 'http'
 import { errorHandler, notFound } from './api/middleware/errorHandler'
 import apiRoutes from './api/routes'
+import { webSocketService } from './services/global'
 
 // Load environment variables
 dotenv.config()
 
 const app = express()
+const server = createServer(app)
 const PORT = process.env.PORT || 3000
 const NODE_ENV = process.env.NODE_ENV || 'development'
+
+// Initialize global services
+webSocketService.initialize(server)
 
 // Security middleware
 app.use(helmet({
@@ -67,6 +73,9 @@ app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
+// Serve static files
+app.use(express.static('public'))
+
 // API routes
 app.use('/api', apiRoutes)
 
@@ -116,11 +125,13 @@ process.on('uncaughtException', (error: Error) => {
   // Don't exit the process, just log the error
 })
 
+
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 WhatsApp Business Bot API running on port ${PORT}`)
   console.log(`📱 Health check: http://localhost:${PORT}/api/health`)
   console.log(`📚 API Documentation: http://localhost:${PORT}/`)
+  console.log(`🔌 WebSocket enabled: ws://localhost:${PORT}/ws`)
   console.log(`🔗 Environment: ${NODE_ENV}`)
   console.log(`\n📋 Quick Start:`)
   console.log(`   1. POST /api/whatsapp/login - Initialize WhatsApp and get QR code`)

@@ -27,18 +27,54 @@ export const errorHandler = (
   let error = { ...err }
   error.message = err.message
 
-  // Log error
-  console.error('API Error:', err)
+  // Log error with more details
+  console.error('🚨 API Error:', {
+    message: err.message,
+    statusCode: err.statusCode || 500,
+    stack: err.stack,
+    url: req.originalUrl,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  })
 
   // Default error
   if (!error.statusCode) {
     error.statusCode = 500
   }
 
+  // Determine error type and message
+  let errorMessage = error.message || 'Internal Server Error'
+  let errorType = 'INTERNAL_ERROR'
+
+  if (error.statusCode === 400) {
+    errorType = 'VALIDATION_ERROR'
+  } else if (error.statusCode === 401) {
+    errorType = 'UNAUTHORIZED'
+  } else if (error.statusCode === 403) {
+    errorType = 'FORBIDDEN'
+  } else if (error.statusCode === 404) {
+    errorType = 'NOT_FOUND'
+  } else if (error.statusCode === 409) {
+    errorType = 'CONFLICT'
+  } else if (error.statusCode === 422) {
+    errorType = 'UNPROCESSABLE_ENTITY'
+  } else if (error.statusCode >= 500) {
+    errorType = 'INTERNAL_ERROR'
+  }
+
   res.status(error.statusCode || 500).json({
     success: false,
-    error: error.message || 'Server Error',
-    // ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    error: {
+      type: errorType,
+      message: errorMessage,
+      statusCode: error.statusCode || 500,
+      timestamp: new Date().toISOString(),
+      path: req.originalUrl
+    },
+    ...(process.env.NODE_ENV === 'development' && { 
+      stack: err.stack,
+      details: err 
+    })
   })
 }
 

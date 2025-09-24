@@ -1,41 +1,130 @@
-import QRCode from 'qrcode'
 import { RemoteAuth, Client, MessageMedia } from 'whatsapp-web.js'
-import QRCodeTerminal from 'qrcode-terminal'
+import QRCodeGenerator from 'qrcode'
 import mongoose from 'mongoose'
 import { MongoStore } from 'wwebjs-mongo'
 import fs from 'fs'
 import path from 'path'
+import { webSocketService } from './global'
 import dotenv from 'dotenv'
-
 
 dotenv.config()
 
+// Constants
+const CONSTANTS = {
+  TIMEOUTS: {
+    INIT: 60000, // 1 minute
+    READY_WAIT: 120000, // 2 minutes
+    QR_POLL: 30000, // 30 seconds
+    CLOSE_OPERATION: 5000, // 5 seconds
+    CLOSE_DESTROY: 10000, // 10 seconds
+    CLOSE_SESSION: 5000, // 5 seconds
+    CLOSE_ALL: 30000, // 30 seconds
+  },
+  STATUS: {
+    CONNECTED: 'CONNECTED',
+    DISCONNECTED: 'DISCONNECTED',
+    AUTH_FAILED: 'AUTH_FAILED',
+    TIMEOUT: 'TIMEOUT',
+    ERROR: 'ERROR',
+    PAIRING: 'PAIRING',
+    AWAITING_SCAN: 'AWAITING_SCAN',
+    LOADING: 'LOADING',
+    NOT_INITIALIZED: 'NOT_INITIALIZED',
+  },
+  CONFIG: {
+    BACKUP_SYNC_INTERVAL: 300000, // 5 minutes
+    QR_POLL_INTERVAL: 500, // 500ms
+    READY_CHECK_INTERVAL: 1000, // 1 second
+    AUTH_CLEANUP_DELAY: 5000, // 5 seconds
+  },
+  CHROME_ARGS: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--disable-gpu',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-features=TranslateUI',
+    '--disable-ipc-flooding-protection',
+  ],
+} as const
+
+// Types
+interface LoginOptions {
+  restore?: boolean
+  sessionExists?: boolean
+  waitForReady?: boolean
+}
+
+interface WebSocketMessage {
+  type: string
+  clientId: string
+  status?: string
+  qrCode?: string
+  timestamp: string
+}
+
+interface ClientInfo {
+  clientId: string
+  status: string
+  isReady: boolean
+  hasQRCode: boolean
+}
+
+// Custom Error Classes
+class WhatsAppClientError extends Error {
+  constructor(message: string, public clientId: string, public code?: string) {
+    super(message)
+    this.name = 'WhatsAppClientError'
+  }
+}
+
+class WhatsAppTimeoutError extends WhatsAppClientError {
+  constructor(clientId: string, operation: string) {
+    super(`${operation} timed out for client ${clientId}`, clientId, 'TIMEOUT')
+    this.name = 'WhatsAppTimeoutError'
+  }
+}
+
+class WhatsAppNotReadyError extends WhatsAppClientError {
+  constructor(clientId: string) {
+    super(`Client ${clientId} is not ready`, clientId, 'NOT_READY')
+    this.name = 'WhatsAppNotReadyError'
+  }
+}
+
+/**
+ * WhatsApp Business Bot Service
+ * Manages multiple WhatsApp client instances with MongoDB session persistence
+ */
 export class WhatsAppService {
-  private clients: Map<string, InstanceType<typeof Client>> = new Map()
-  private qrCodes: Map<string, string> = new Map()
-  private authPath = path.resolve(process.cwd(), '.wwebjs_auth')
-  private maxInitTimeout = 30000 // ms
+  private readonly clients: Map<string, InstanceType<typeof Client>> = new Map()
+  private readonly qrCodes: Map<string, string> = new Map()
+  private readonly authPath: string
   private mongoStore: InstanceType<typeof MongoStore> | null = null
 
   constructor() {
-    // Initialize MongoDB connection
+    this.authPath = path.resolve(process.cwd(), '.wwebjs_auth')
     this.initializeMongoDB()
   }
 
+  // ==================== INITIALIZATION ====================
+
   /**
-   * Initialize MongoDB connection
+   * Initialize MongoDB connection and restore existing sessions
    */
-  private async initializeMongoDB() {
+  private async initializeMongoDB(): Promise<void> {
     try {
       const mongoUri = process.env.MONGODB_URI!
-
       await mongoose.connect(mongoUri)
       console.log('✅ MongoDB connected successfully')
 
-      // Initialize MongoStore
       this.mongoStore = new MongoStore({ mongoose })
-      this.restoreAllClients()
-
+      await this.restoreAllClients()
       console.log('✅ MongoStore initialized successfully')
     } catch (error) {
       console.error('❌ MongoDB connection failed:', error)
@@ -43,208 +132,359 @@ export class WhatsAppService {
     }
   }
 
-  private async getClientIdsFromAuthPath(): Promise<string[]> {
-    if (!fs.existsSync(this.authPath)) return []
-    const entries = fs.readdirSync(this.authPath, { withFileTypes: true })
-    const clientIds = entries
-      .filter(e => e.isDirectory() && e.name.startsWith('RemoteAuth-'))
-      .map(e => e.name.replace(/^RemoteAuth-/, ''))
-    // .filter(clientId => {
-    //   // check if folder has files
-    //   const fullPath = path.join(this.authPath, `RemoteAuth-${clientId}`)
-    //   const contents = fs.readdirSync(fullPath)
-    //   return contents.length > 0 // only include if not empty
-    // })
-
-    return clientIds
-  }
-
   /**
- * Restore all sessions from .wwebjs_auth directory
- */
-  private async restoreAllClients() {
+   * Restore all existing client sessions from auth directory
+   */
+  private async restoreAllClients(): Promise<void> {
     if (!fs.existsSync(this.authPath)) return
 
     const clientIds = await this.getClientIdsFromAuthPath()
-
-    console.log(`🔄 Found ${clientIds.length} RemoteAuth:`, clientIds)
+    console.log(`🔄 Found ${clientIds.length} RemoteAuth sessions:`, clientIds)
 
     for (const clientId of clientIds) {
-      const sessionExists = await this.mongoStore.sessionExists({ session: `RemoteAuth-${clientId}` })
-      console.log('✅ Session exists:', sessionExists)
-
-      if (!sessionExists) {
-        console.log(`Session does not exist for client ${clientId}`)
-        this.deleteAuthDirectory(clientId)
-        continue
-      }
-
       try {
-        await this.loginClient(clientId)
+        const sessionExists = await this.mongoStore?.sessionExists({ 
+          session: this.getSessionName(clientId) 
+        }) ?? false
+
+        if (!sessionExists) {
+          console.log(`Session does not exist for client ${clientId}`)
+          this.deleteAuthDirectory(clientId)
+          continue
+        }
+
+        await this.loginClient(clientId, { restore: true, sessionExists })
         console.log(`✅ Restored client ${clientId}`)
-      } catch (err) {
-        console.error(`Failed to restore client ${clientId}:`, err)
+      } catch (error) {
+        console.error(`Failed to restore client ${clientId}:`, error)
       }
     }
   }
 
   /**
-   * Initialize WhatsApp client with QR authentication for specific client
+   * Get client IDs from auth directory
    */
-  async loginClient(clientId: string) {
+  private async getClientIdsFromAuthPath(): Promise<string[]> {
+    if (!fs.existsSync(this.authPath)) return []
+
+    const entries = fs.readdirSync(this.authPath, { withFileTypes: true })
+    return entries
+      .filter(entry => entry.isDirectory() && entry.name.startsWith('RemoteAuth-'))
+      .map(entry => entry.name.replace(/^RemoteAuth-/, ''))
+      .filter(clientId => {
+        const fullPath = path.join(this.authPath, this.getSessionName(clientId))
+        if (!fs.existsSync(fullPath)) return false
+        const contents = fs.readdirSync(fullPath)
+        return contents.length > 0
+      })
+  }
+
+  // ==================== CLIENT MANAGEMENT ====================
+
+  /**
+   * Initialize WhatsApp client with QR authentication
+   */
+  async loginClient(clientId: string, options: LoginOptions = {}): Promise<void> {
+    const { restore = false, sessionExists = false, waitForReady = false } = options
+
     try {
-      // Check if client already exists and is connected
+      // Validate client ID
+      this.validateClientId(clientId)
+
+      // Handle existing client
       if (this.clients.has(clientId)) {
-        console.log(`Client ${clientId} already exists`)
         const status = await this.getStatus(clientId)
-        console.log(`Status of client ${clientId}:`, status)
-        if (status === 'CONNECTED') {
+        if (status === CONSTANTS.STATUS.CONNECTED) {
           console.log(`✅ Client ${clientId} already connected`)
           return
         }
-        // If client exists but not connected, destroy and recreate
-        await this.close(clientId).catch()
+        await this.close(clientId)
       }
 
-      // Create new client with unique clientId
-      const authStrategy = new RemoteAuth({
-        clientId,
-        store: this.mongoStore,
-        backupSyncIntervalMs: 300000 // 5 minutes
-      })
-
-      const client = new Client({
-        authStrategy,
-        puppeteer: {
-          headless: process.env.NODE_ENV === 'production',
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor'
-          ],
-        },
-      })
-      console.log(`New client created for ${clientId}`)
-
-      // bind events before initialize
-      this.bindEvents(client, clientId)
-
-      // Store client
+      // Create and configure client
+      const client = await this.createClient(clientId)
+      this.setupEventHandlers(client, clientId, { restore, sessionExists })
       this.clients.set(clientId, client)
-      console.log(`Client ${clientId} set in map`)
 
-      // timeout guard
-      const initPromise = client.initialize()
-      await Promise.race([
-        initPromise,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('initialize timeout')), this.maxInitTimeout))
-      ])
+      // Initialize client
+      await this.initializeClient(client, clientId)
 
-      console.log(`Client ${clientId} initialized`)
+      // Wait for ready state if requested
+      if (waitForReady) {
+        await this.waitForClientReady(clientId)
+      }
     } catch (error) {
-      console.error(`Error initializing client ${clientId}:`, error)
-      this.close(clientId)
+      await this.handleLoginError(clientId, error, waitForReady)
       throw error
     }
   }
 
-  /** Event binding helper */
-  private bindEvents(client: InstanceType<typeof Client>, clientId: string) {
-    client.removeAllListeners() // ensure no dupes
-    console.log(`🔗 ${'\x1b[36m'}Binding events for client: ${clientId}${'\x1b[0m'}`)
-
-    client.on('qr', async (qr: string) => {
-      try {
-        console.log(`📱 ${'\x1b[33m'}QR code generated for client: ${clientId}${'\x1b[0m'}`)
-        QRCodeTerminal.generate(qr, { small: true })
-        const qrCodeDataUrl = await QRCode.toDataURL(qr)
-        this.qrCodes.set(clientId, qrCodeDataUrl)
-      } catch (e) {
-        console.warn(`⚠️ ${'\x1b[31m'}QR generation failed for ${clientId}${'\x1b[0m'}`, e)
-      }
+  /**
+   * Create a new WhatsApp client instance
+   */
+  private async createClient(clientId: string): Promise<InstanceType<typeof Client>> {
+    const authStrategy = new RemoteAuth({
+      clientId,
+      store: this.mongoStore,
+      backupSyncIntervalMs: CONSTANTS.CONFIG.BACKUP_SYNC_INTERVAL,
     })
 
-    client.on('ready', () => {
-      console.log(`🚀 ${'\x1b[32m'}Client ${clientId} is READY!${'\x1b[0m'}`)
-      console.log(`✅ ${'\x1b[32m'}WhatsApp client ready for: ${clientId}${'\x1b[0m'}`)
-      this.qrCodes.delete(clientId) // Clear QR code once connected
-      client.removeAllListeners('qr') // Remove QR listener when ready
-    })
-
-    client.on('auth_failure', msg => {
-      console.log(`❌ ${'\x1b[31m'}AUTH FAILURE for ${clientId}${'\x1b[0m'}`, msg)
-      console.log(`💥 ${'\x1b[31m'}WhatsApp authentication failed for ${clientId}: ${msg}${'\x1b[0m'}`)
-      this.close(clientId)
-    })
-
-    client.on('disconnected', reason => {
-      console.log(`🔌 ${'\x1b[35m'}WhatsApp client disconnected for ${clientId}: ${reason}${'\x1b[0m'}`)
-      try {
-        this.close(clientId)
-      } catch (error) {
-        console.log(`❌ disconnectedError: `, error)
-      }
-    })
-
-    client.on('change_state', (state) => {
-      const stateColor = state === 'CONNECTED' ? '\x1b[32m' : state === 'OPENING' ? '\x1b[33m' : '\x1b[31m'
-      console.log(`🔄 ${stateColor}State change for ${clientId}: ${state}${'\x1b[0m'}`)
-    })
-
-    client.on('loading_screen', (percent, msg) => {
-      const percentNum = Number(percent.replace('%', '')) || 0
-      const progressBar = '█'.repeat(Math.floor(percentNum / 10)) + '░'.repeat(10 - Math.floor(percentNum / 10))
-      console.log(`⏳ ${'\x1b[36m'}Loading ${clientId}: [${progressBar}] ${percentNum}% - ${msg}${'\x1b[0m'}`)
-    })
-
-    client.on('remote_session_saved', () => {
-      console.log(`💾 ${'\x1b[34m'}Remote session saved for ${clientId}${'\x1b[0m'}`)
-    })
-
-    client.on('authenticated', (session) => {
-      console.log(`🔐 ${'\x1b[32m'}Authenticated successfully for ${clientId}${'\x1b[0m'}`, session)
+    return new Client({
+      authStrategy,
+      puppeteer: {
+        headless: process.env.NODE_ENV === 'production',
+        args: [...CONSTANTS.CHROME_ARGS],
+      },
     })
   }
 
   /**
-   * Get current QR code as base64 data URL for specific client with polling
+   * Initialize client with timeout
    */
-  async getQRCode(clientId: string, maxWaitTime: number = 30000): Promise<string> {
-    const startTime = Date.now()
+  private async initializeClient(client: InstanceType<typeof Client>, clientId: string): Promise<void> {
+    const initPromise = client.initialize()
+    await Promise.race([
+      initPromise,
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new WhatsAppTimeoutError(clientId, 'Initialize')), CONSTANTS.TIMEOUTS.INIT)
+      )
+    ])
+    console.log(`Client ${clientId} initialized`)
+  }
 
-    while (Date.now() - startTime < maxWaitTime) {
-      // Check if client exists
-      if (!this.clients.has(clientId)) {
-        throw new Error(`Client ${clientId} not found. Please initialize WhatsApp first.`)
-      }
+  /**
+   * Wait for client to be ready with timeout
+   */
+  private async waitForClientReady(clientId: string): Promise<void> {
+    console.log(`⏳ Waiting for client ${clientId} to be ready...`)
 
-      // Check if client is already connected
-      try {
-        const client = this.clients.get(clientId)!
-        const state = await client.getState()
-        if (state === 'CONNECTED') {
-          throw new Error(`Client ${clientId} is already connected. No QR code needed.`)
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(async () => {
+        console.log(`⏰ Client ${clientId} did not become ready within 2 minutes, closing...`)
+        this.broadcastStatus(clientId, CONSTANTS.STATUS.TIMEOUT)
+        await this.safeClose(clientId)
+        reject(new WhatsAppTimeoutError(clientId, 'Ready check'))
+      }, CONSTANTS.TIMEOUTS.READY_WAIT)
+
+      const checkReady = async (): Promise<void> => {
+        try {
+          if (await this.isClientReady(clientId)) {
+            clearTimeout(timeout)
+            console.log(`✅ Client ${clientId} is ready!`)
+            this.broadcastStatus(clientId, CONSTANTS.STATUS.CONNECTED)
+            resolve()
+          } else {
+            setTimeout(checkReady, CONSTANTS.CONFIG.READY_CHECK_INTERVAL)
+          }
+        } catch (error) {
+          clearTimeout(timeout)
+          this.broadcastStatus(clientId, CONSTANTS.STATUS.ERROR)
+          await this.safeClose(clientId)
+          reject(error)
         }
+      }
+
+      checkReady()
+    })
+  }
+
+  // ==================== EVENT HANDLERS ====================
+
+  /**
+   * Setup all event handlers for a client
+   */
+  private setupEventHandlers(
+    client: InstanceType<typeof Client>, 
+    clientId: string, 
+    options: { restore: boolean; sessionExists: boolean }
+  ): void {
+    this.setupQRHandler(client, clientId, options)
+    this.setupReadyHandler(client, clientId)
+    this.setupAuthFailureHandler(client, clientId)
+    this.setupDisconnectHandler(client, clientId)
+    this.setupLoadingHandler(client, clientId)
+    this.setupSessionHandlers(client, clientId)
+  }
+
+  /**
+   * Setup QR code event handler
+   */
+  private setupQRHandler(
+    client: InstanceType<typeof Client>, 
+    clientId: string, 
+    options: { restore: boolean; sessionExists: boolean }
+  ): void {
+    client.on('qr', async (qr: string) => {
+      try {
+        if (options.restore && options.sessionExists) {
+          await this.safeClose(clientId)
+          console.log('Client closed due to restore and session exists but QR code generated')
+          return
+        }
+
+        console.log(`📱 QR code generated for client: ${clientId}`)
+        const qrCodeDataUrl = await QRCodeGenerator.toDataURL(qr)
+        this.qrCodes.set(clientId, qrCodeDataUrl)
+
+        // Broadcast QR code
+        this.broadcast({
+          type: 'qr-code',
+          clientId,
+          qrCode: qrCodeDataUrl,
+          timestamp: new Date().toISOString(),
+        })
+
+        // Broadcast status update
+        this.broadcastStatus(clientId, CONSTANTS.STATUS.AWAITING_SCAN)
       } catch (error) {
-        // If state check fails, continue to check for QR code
+        console.warn(`⚠️ QR generation failed for ${clientId}:`, error)
+      }
+    })
+  }
+
+  /**
+   * Setup ready event handler
+   */
+  private setupReadyHandler(client: InstanceType<typeof Client>, clientId: string): void {
+    client.on('ready', () => {
+      console.log(`🚀 Client ${clientId} is READY!`)
+      this.qrCodes.delete(clientId)
+      client.removeAllListeners('qr')
+      this.broadcastStatus(clientId, CONSTANTS.STATUS.CONNECTED)
+    })
+  }
+
+  /**
+   * Setup authentication failure handler
+   */
+  private setupAuthFailureHandler(client: InstanceType<typeof Client>, clientId: string): void {
+    client.on('auth_failure', (msg: string) => {
+      console.log(`❌ AUTH FAILURE for ${clientId}: ${msg}`)
+      this.broadcastStatus(clientId, CONSTANTS.STATUS.AUTH_FAILED)
+      this.safeClose(clientId)
+    })
+  }
+
+  /**
+   * Setup disconnect handler
+   */
+  private setupDisconnectHandler(client: InstanceType<typeof Client>, clientId: string): void {
+    client.on('disconnected', (reason: string) => {
+      console.log(`🔌 Client ${clientId} disconnected: ${reason}`)
+      this.broadcastStatus(clientId, CONSTANTS.STATUS.DISCONNECTED)
+      this.safeClose(clientId)
+    })
+  }
+
+  /**
+   * Setup loading screen handler
+   */
+  private setupLoadingHandler(client: InstanceType<typeof Client>, clientId: string): void {
+    client.on('loading_screen', (percent: number, msg: string) => {
+      console.log(`⏳ Loading ${clientId}: ${percent}% - ${msg}`)
+      
+      // Broadcast loading status
+      this.broadcastStatus(clientId, CONSTANTS.STATUS.LOADING)
+    })
+  }
+
+  /**
+   * Setup session-related handlers
+   */
+  private setupSessionHandlers(client: InstanceType<typeof Client>, clientId: string): void {
+    client.on('remote_session_saved', () => {
+      console.log(`💾 Remote session saved for ${clientId}`)
+    })
+
+    client.on('authenticated', (session: any) => {
+      console.log(`🔐 Authenticated successfully for ${clientId}`)
+    })
+  }
+
+  // ==================== MESSAGING ====================
+
+  /**
+   * Send text message to a phone number
+   */
+  async sendText(clientId: string, phone: string, message: string): Promise<void> {
+    await this.ensureClientReady(clientId)
+    const client = this.clients.get(clientId)!
+    const chatId = this.toChatId(phone)
+    
+    await client.sendMessage(chatId, message)
+    console.log(`💬 Text sent to ${phone} via client ${clientId}`)
+  }
+
+  /**
+   * Send file to a phone number
+   */
+  async sendFile(
+    clientId: string,
+    phone: string,
+    file: Blob,
+    filename: string,
+    mimeType: string,
+    caption?: string
+  ): Promise<void> {
+    await this.ensureClientReady(clientId)
+    const client = this.clients.get(clientId)!
+
+    const arrayBuffer = await file.arrayBuffer()
+    const fileBuffer = Buffer.from(arrayBuffer)
+    const media = new MessageMedia(mimeType, fileBuffer.toString('base64'), filename)
+    const chatId = this.toChatId(phone)
+
+    await client.sendMessage(chatId, media, { caption })
+    console.log(`📎 File sent to ${phone} via client ${clientId}: ${filename}`)
+  }
+
+  /**
+   * Check if a phone number is registered on WhatsApp
+   */
+  async isRegisteredUser(clientId: string, phone: string): Promise<boolean> {
+    await this.ensureClientReady(clientId)
+    const client = this.clients.get(clientId)!
+    const chatId = this.toChatId(phone)
+    return await client.isRegisteredUser(chatId)
+  }
+
+  // ==================== CLIENT STATUS ====================
+
+  /**
+   * Get client status
+   */
+  async getStatus(clientId: string): Promise<string> {
+    try {
+      if (!this.clients.has(clientId)) return CONSTANTS.STATUS.NOT_INITIALIZED
+      
+      const client = this.clients.get(clientId)!
+      const state = await client.getState()
+
+      if (state === null || state === undefined) {
+        return CONSTANTS.STATUS.PAIRING
       }
 
-      // Check if QR code is available
-      if (this.qrCodes.has(clientId)) {
-        return this.qrCodes.get(clientId)!
-      }
-
-      // Wait 500ms before checking again
-      await new Promise(resolve => setTimeout(resolve, 500))
+      return state
+    } catch (error) {
+      console.error(`Error getting status for client ${clientId}:`, error)
+      return CONSTANTS.STATUS.DISCONNECTED
     }
+  }
 
-    throw new Error(`QR code not generated within ${maxWaitTime}ms. Please try again.`)
+  /**
+   * Check if client is ready
+   */
+  async isClientReady(clientId: string): Promise<boolean> {
+    try {
+      if (!this.clients.has(clientId)) return false
+      
+      const client = this.clients.get(clientId)!
+      const state = await client.getState()
+      return state === CONSTANTS.STATUS.CONNECTED
+    } catch (error) {
+      console.error(`Error checking client ${clientId} state:`, error)
+      return false
+    }
   }
 
   /**
@@ -255,33 +495,192 @@ export class WhatsAppService {
   }
 
   /**
- * Check if client is ready
- */
-  async isClientReady(clientId: string): Promise<boolean> {
-    try {
+   * Get QR code with polling
+   */
+  async getQRCode(clientId: string, maxWaitTime: number = CONSTANTS.TIMEOUTS.QR_POLL): Promise<string> {
+    const startTime = Date.now()
+
+    while (Date.now() - startTime < maxWaitTime) {
       if (!this.clients.has(clientId)) {
+        throw new WhatsAppClientError(`Client ${clientId} not found`, clientId)
+      }
+
+      try {
+        const client = this.clients.get(clientId)!
+        const state = await client.getState()
+        if (state === CONSTANTS.STATUS.CONNECTED) {
+          throw new WhatsAppClientError(`Client ${clientId} is already connected`, clientId)
+        }
+      } catch (error) {
+        // Continue to check for QR code
+      }
+
+      if (this.qrCodes.has(clientId)) {
+        return this.qrCodes.get(clientId)!
+      }
+
+      await this.sleep(CONSTANTS.CONFIG.QR_POLL_INTERVAL)
+    }
+
+    throw new WhatsAppClientError(`QR code not generated within ${maxWaitTime}ms`, clientId)
+  }
+
+  /**
+   * Get QR code directly from storage
+   */
+  getQRCodeDirect(clientId: string): string | null {
+    return this.qrCodes.get(clientId) || null
+  }
+
+  // ==================== CLIENT LIFECYCLE ====================
+
+  /**
+   * Logout client
+   */
+  async logout(clientId: string): Promise<void> {
+    if (!this.clients.has(clientId)) return
+
+    const state = await this.getStatus(clientId)
+    if (state === CONSTANTS.STATUS.CONNECTED) {
+      const client = this.clients.get(clientId)!
+      await client.logout()
+    } else {
+      throw new WhatsAppClientError(`Client ${clientId} is not connected`, clientId)
+    }
+  }
+
+  /**
+   * Close client with proper cleanup
+   */
+  async close(clientId: string): Promise<void> {
+    if (!this.clients.has(clientId)) return
+
+    const client = this.clients.get(clientId)!
+    console.log(`🔄 Closing client ${clientId}`)
+
+    // Execute cleanup operations in sequence, but continue even if some fail
+    try {
+      await this.withTimeout(
+        () => this.logout(clientId),
+        CONSTANTS.TIMEOUTS.CLOSE_OPERATION,
+        `Logout ${clientId}`
+      )
+    } catch (error) {
+      console.warn(`⚠️ Logout failed for ${clientId}:`, error)
+    }
+
+    try {
+      await this.withTimeout(
+        () => client.destroy(),
+        CONSTANTS.TIMEOUTS.CLOSE_DESTROY,
+        `Destroy ${clientId}`
+      )
+    } catch (error) {
+      console.warn(`⚠️ Destroy failed for ${clientId}:`, error)
+    }
+
+    try {
+      await this.withTimeout(
+        () => this.removeSession(clientId),
+        CONSTANTS.TIMEOUTS.CLOSE_SESSION,
+        `Remove session ${clientId}`
+      )
+    } catch (error) {
+      console.warn(`⚠️ Session removal failed for ${clientId}:`, error)
+    }
+
+    // Clean up memory immediately (always run)
+    this.clients.delete(clientId)
+    this.qrCodes.delete(clientId)
+    console.log(`✅ Client ${clientId} removed from memory`)
+
+    // Clean up auth directory in background
+    setTimeout(() => this.deleteAuthDirectory(clientId), CONSTANTS.CONFIG.AUTH_CLEANUP_DELAY)
+    console.log(`✅ Client ${clientId} closed successfully`)
+  }
+
+  /**
+   * Close all clients
+   */
+  async closeAll(): Promise<void> {
+    const clientIds = Array.from(this.clients.keys())
+    console.log(`🔄 Closing ${clientIds.length} clients...`)
+
+    const closePromises = clientIds.map(async (clientId) => {
+      try {
+        await this.close(clientId)
+      } catch (error) {
+        console.warn(`⚠️ Failed to close client ${clientId}:`, error)
+      }
+    })
+
+    await this.withTimeout(
+      () => Promise.allSettled(closePromises),
+      CONSTANTS.TIMEOUTS.CLOSE_ALL,
+      'Close all clients'
+    )
+
+    console.log(`✅ All clients closed`)
+  }
+
+  // ==================== SESSION MANAGEMENT ====================
+
+  /**
+   * Remove session from MongoDB store
+   */
+  async removeSession(clientId: string): Promise<boolean> {
+    try {
+      if (!this.mongoStore) {
+        console.log(`❌ MongoDB store not available for client ${clientId}`)
         return false
       }
-      const client = this.clients.get(clientId)!
-      const state = await client.getState()
-      return state === 'CONNECTED'
+
+      const sessionExists = await this.mongoStore.sessionExists({ 
+        session: this.getSessionName(clientId) 
+      })
+      
+      if (!sessionExists) {
+        console.log(`ℹ️ No session found for client ${clientId} in MongoDB`)
+        return false
+      }
+
+      await this.mongoStore.delete({ session: this.getSessionName(clientId) })
+      console.log(`🗑️ Session removed from MongoDB for client ${clientId}`)
+      return true
     } catch (error) {
-      console.error(`Error checking client ${clientId} state:`, error)
+      console.error(`❌ Error removing session from MongoDB for client ${clientId}:`, error)
       return false
     }
   }
 
+  /**
+   * Get session name for a client
+   */
+  getSessionName(clientId: string): string {
+    return `RemoteAuth-${clientId}`
+  }
+
+  // ==================== UTILITY METHODS ====================
+
+  /**
+   * Validate client ID
+   */
+  private validateClientId(clientId: string): void {
+    if (!clientId || typeof clientId !== 'string' || clientId.trim().length === 0) {
+      throw new WhatsAppClientError('Client ID must be a non-empty string', clientId)
+    }
+  }
 
   /**
    * Ensure client is ready before operations
    */
   private async ensureClientReady(clientId: string): Promise<void> {
     if (!this.clients.has(clientId)) {
-      throw new Error(`Client ${clientId} not found. Please initialize first by calling /api/whatsapp/login`)
+      throw new WhatsAppClientError(`Client ${clientId} not found`, clientId)
     }
 
-    if (!this.isClientReady(clientId)) {
-      throw new Error(`Client ${clientId} is not ready. Please login to WhatsApp first by calling /api/whatsapp/login`)
+    if (!(await this.isClientReady(clientId))) {
+      throw new WhatsAppNotReadyError(clientId)
     }
   }
 
@@ -293,138 +692,87 @@ export class WhatsAppService {
   }
 
   /**
-   * Send text message to a phone number
+   * Broadcast status update via WebSocket
    */
-  async sendText(clientId: string, phone: string, message: string): Promise<void> {
-    await this.ensureClientReady(clientId)
-    const client = this.clients.get(clientId)!
-
-    const chatId = this.toChatId(phone)
-    await client.sendMessage(chatId, message)
-    console.log(`💬 Text sent to ${phone} via client ${clientId}`)
-  }
-
-
-
-  /**
-   * Send file to a phone number
-   * Expects Blob object with MIME type
-   */
-  async sendFile(
-    clientId: string, 
-    phone: string, 
-    file: Blob, 
-    filename: string, 
-    mimeType: string, 
-    caption?: string
-  ): Promise<void> {
-    await this.ensureClientReady(clientId)
-    const client = this.clients.get(clientId)!
-
-    // Convert Blob to Buffer
-    const arrayBuffer = await file.arrayBuffer()
-    const fileBuffer = Buffer.from(arrayBuffer)
-
-    const chatId = this.toChatId(phone)
-    const media = new MessageMedia(
-      mimeType,
-      fileBuffer.toString('base64'),
-      filename
-    )
-
-    await client.sendMessage(chatId, media, { caption })
-    console.log(`📎 File sent to ${phone} via client ${clientId}: ${filename}`)
-  }
-
-
-  /**
-   * Check if a phone number is registered on WhatsApp
-   */
-  async isRegisteredUser(clientId: string, phone: string): Promise<boolean> {
-    await this.ensureClientReady(clientId)
-    const client = this.clients.get(clientId)!
-
-    const chatId = this.toChatId(phone)
-    return await client.isRegisteredUser(chatId)
+  private broadcastStatus(clientId: string, status: string): void {
+    this.broadcast({
+      type: 'status-update',
+      clientId,
+      status,
+      timestamp: new Date().toISOString(),
+    })
   }
 
   /**
-   * Get client status
+   * Broadcast message via WebSocket
    */
-  async getStatus(clientId: string): Promise<string> {
+  private broadcast(message: WebSocketMessage): void {
+    webSocketService.broadcast(message)
+  }
+
+  /**
+   * Safe close with error handling
+   */
+  private async safeClose(clientId: string): Promise<void> {
     try {
-      if (!this.clients.has(clientId)) return 'Not Initialized'
-      const client = this.clients.get(clientId)!
-      return await client.getState()
-    } catch (error: any) {
-      console.error(`Error getting status for client ${clientId}:`, error.message)
-      return 'DISCONNECTED'
-    }
-  }
-
-  async logout(clientId: string) {
-    if (!this.clients.has(clientId)) return
-    const state = await this.getStatus(clientId)
-    if (state === 'CONNECTED') {
-      const client = this.clients.get(clientId)!
-      await client.logout()
-    } else {
-      throw new Error(`Client ${clientId} is not connected`)
+      await this.close(clientId)
+    } catch (error) {
+      console.error(`Error closing client ${clientId}:`, error)
     }
   }
 
   /**
-   * Delete RemoteAuth directory for a specific client
+   * Handle login errors
+   */
+  private async handleLoginError(clientId: string, error: any, waitForReady: boolean): Promise<void> {
+    if (waitForReady && this.clients.has(clientId)) {
+      console.log(`❌ Error during login for ${clientId}, closing client...`)
+      this.broadcastStatus(clientId, CONSTANTS.STATUS.ERROR)
+      await this.safeClose(clientId)
+    }
+  }
+
+  /**
+   * Execute operation with timeout
+   */
+  private async withTimeout<T>(
+    operation: () => Promise<T>,
+    timeoutMs: number,
+    operationName: string
+  ): Promise<T> {
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
+      )
+      
+      const result = await Promise.race([operation(), timeoutPromise])
+      console.log(`✅ ${operationName} completed`)
+      return result
+    } catch (error) {
+      console.warn(`⚠️ ${operationName} failed:`, error instanceof Error ? error.message : 'Unknown error')
+      throw error
+    }
+  }
+
+  /**
+   * Sleep utility
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  /**
+   * Delete auth directory for a client
    */
   private deleteAuthDirectory(clientId: string): void {
     try {
-      const authDir = path.join(this.authPath, `RemoteAuth-${clientId}`)
+      const authDir = path.join(this.authPath, this.getSessionName(clientId))
       if (fs.existsSync(authDir)) {
         fs.rmSync(authDir, { recursive: true, force: true })
-        console.log(`🗑️ ${'\x1b[33m'}Deleted auth directory for ${clientId}${'\x1b[0m'}`)
+        console.log(`🗑️ Deleted auth directory for ${clientId}`)
       }
     } catch (error) {
-      console.error(`❌ ${'\x1b[31m'}Failed to delete auth directory for ${clientId}:${'\x1b[0m'}`, error)
+      console.error(`❌ Failed to delete auth directory for ${clientId}:`, error)
     }
   }
-
-  /**
-   * Close the WhatsApp client
-   */
-  async close(clientId: string) {
-    if (!this.clients.has(clientId)) return
-    const client = this.clients.get(clientId)!
-
-    try { await this.logout(clientId) } catch { }
-    try { await client.destroy() } catch { }
-
-    setTimeout(() => this.deleteAuthDirectory(clientId), 5000)
-
-    this.clients.delete(clientId)
-    this.qrCodes.delete(clientId)
-
-    console.log(`✅ Client ${clientId} closed`)
-  }
-
-  /**
-   * Close all clients
-   */
-  async closeAll(): Promise<void> {
-    const clientIds = Array.from(this.clients.keys())
-    console.log(`🔄 Closing ${clientIds.length} clients...`)
-
-    for (const clientId of clientIds) {
-      await this.close(clientId)
-    }
-
-    console.log(`✅ All clients closed`)
-  }
-
-  /**
-   * Get QR code directly from storage (no polling)
-   */
-  getQRCodeDirect(clientId: string): string | null {
-    return this.qrCodes.get(clientId) || null
-  }
-
 }
