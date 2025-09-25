@@ -16,6 +16,9 @@ const server = createServer(app)
 const PORT = process.env.PORT || 3000
 const NODE_ENV = process.env.NODE_ENV || 'development'
 
+// Trust proxy for rate limiting to work correctly behind load balancers
+app.set('trust proxy', 1)
+
 // Initialize global services
 webSocketService.initialize(server)
 
