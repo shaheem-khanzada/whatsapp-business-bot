@@ -33,11 +33,6 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
     res.status(200).json({
       success: true,
       message: `WhatsApp client '${clientId}' is ready and connected.`,
-      data: {
-        clientId,
-        status,
-        timestamp: new Date().toISOString()
-      }
     })
   } catch (error) {
     console.error('Login error:', error)
@@ -74,8 +69,6 @@ router.post('/check-registration', validatePhoneNumber, async (req: Request, res
       success: true,
       message: `Phone number registration status checked successfully`,
       data: { 
-        clientId, 
-        phone, 
         isRegistered,
         timestamp: new Date().toISOString()
       }
@@ -257,42 +250,32 @@ router.post('/send', upload.single('file'), validateSendMessage, async (req: Req
     if (file) {
       // Send file with message as caption
       const fileBlob = new Blob([file.buffer], { type: file.mimetype })
-      await whatsAppService.sendFile(clientId, phone, fileBlob, file.originalname, file.mimetype, text)
+      const message = await whatsAppService.sendFile(clientId, phone, fileBlob, file.originalname, file.mimetype, text)
       
       res.status(200).json({
         success: true,
         message: `File sent successfully to ${phone}`,
         data: {
-          clientId,
-          phone,
-          message: text || null,
-          file: {
-            filename: file.originalname,
-            type: file.mimetype,
-            size: file.size
-          },
+          message: message,
           timestamp: new Date().toISOString()
         }
       })
     } else if (text) {
       // Send text message only if no file
-      await whatsAppService.sendText(clientId, phone, text)
+      const message = await whatsAppService.sendText(clientId, phone, text)
       
       res.status(200).json({
         success: true,
         message: `Text message sent successfully to ${phone}`,
         data: {
-          clientId,
-          phone,
-          message: text,
-          file: null,
+          message: message,
           timestamp: new Date().toISOString()
         }
       })
     }
   } catch (error) {
     console.error('Send message error:', error)
-    next(new AppError(`Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`, 500))
+    next(new AppError(`${error instanceof Error ? error.message : 'Unknown error'}`, 500))
   }
 })
 

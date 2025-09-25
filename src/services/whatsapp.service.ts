@@ -1,4 +1,4 @@
-import { RemoteAuth, Client, MessageMedia } from 'whatsapp-web.js'
+import { RemoteAuth, Client, MessageMedia, Message } from 'whatsapp-web.js'
 import QRCodeGenerator from 'qrcode'
 import mongoose from 'mongoose'
 import { MongoStore } from 'wwebjs-mongo'
@@ -149,7 +149,7 @@ export class WhatsAppService {
       try {
         const sessionExists = await this.mongoStore?.sessionExists({
           session: this.getSessionName(clientId)
-        }) ?? false
+        })
 
         if (!sessionExists) {
           console.log(`Session does not exist for client ${clientId}`)
@@ -272,8 +272,6 @@ export class WhatsAppService {
     })
   }
 
-  // ==================== EVENT HANDLERS ====================
-
   /**
    * Setup all event handlers for a client
    */
@@ -389,13 +387,15 @@ export class WhatsAppService {
   /**
    * Send text message to a phone number
    */
-  async sendText(clientId: string, phone: string, message: string): Promise<void> {
+  async sendText(clientId: string, phone: string, msg: string): Promise<Message> {
     await this.ensureClientReady(clientId)
     const client = this.clients.get(clientId)!
     const chatId = this.toChatId(phone)
 
-    await client.sendMessage(chatId, message)
+    const message = await client.sendMessage(chatId, msg)
+    console.log('Message', message)
     console.log(`💬 Text sent to ${phone} via client ${clientId}`)
+    return message
   }
 
   /**
@@ -408,7 +408,7 @@ export class WhatsAppService {
     filename: string,
     mimeType: string,
     caption?: string
-  ): Promise<void> {
+  ): Promise<Message> {
     console.log('Sending file to client', clientId)
     await this.ensureClientReady(clientId)
     console.log('Client ready', clientId)
@@ -419,8 +419,10 @@ export class WhatsAppService {
     const media = new MessageMedia(mimeType, fileBuffer.toString('base64'), filename)
     const chatId = this.toChatId(phone)
     console.log('Chat ID', chatId)
-    await client.sendMessage(chatId, media, { caption })
+    const message = await client.sendMessage(chatId, media, { caption })
+    console.log('Message', message)
     console.log(`📎 File sent to ${phone} via client ${clientId}: ${filename}`)
+    return message
   }
 
   /**

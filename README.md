@@ -5,13 +5,15 @@ A robust, production-ready WhatsApp Business Bot API built with Node.js, Express
 ## 🚀 Features
 
 - **Multi-Client Support** - Manage multiple WhatsApp client instances simultaneously
-- **MongoDB Session Persistence** - Automatic session storage and restoration
+- **MongoDB Session Persistence** - Automatic session storage and restoration using wwebjs-mongo
 - **Real-time WebSocket Communication** - Live QR code and status updates
 - **Robust Error Handling** - Comprehensive error management with custom error classes
 - **TypeScript Support** - Full type safety and IntelliSense
-- **File Upload Support** - Send text messages, files, or both
-- **Phone Number Validation** - Built-in WhatsApp phone number verification
+- **File Upload Support** - Send text messages, files, or both using FormData
+- **Phone Number Validation** - Built-in WhatsApp phone number verification (+92 format)
 - **Automatic Cleanup** - Proper resource management and cleanup
+- **Session Restoration** - Automatic client restoration on server restart
+- **Rate Limiting** - Built-in rate limiting for API protection
 - **Production Ready** - Optimized for Docker and production environments
 
 ## 📋 Prerequisites
@@ -184,51 +186,75 @@ Check if a phone number is registered on WhatsApp.
 
 Send a text message, file, or both to a phone number.
 
-**Request Body (Text Message):**
+**Request Body (Text Message - JSON):**
 ```json
 {
   "clientId": "user-1",
   "phone": "+923001234567",
-  "message": "Hello from WhatsApp Bot!"
+  "text": "Hello from WhatsApp Bot!"
 }
 ```
 
 **Request Body (File Upload - FormData):**
 ```
+Content-Type: multipart/form-data
+
 clientId: user-1
 phone: +923001234567
-message: Here's your document!
+text: Here's your document! (optional - used as caption)
 file: [File object]
 ```
 
-**Response:**
+**Note:** The send endpoint uses FormData for file uploads. Use `text` field instead of `message` for the text content.
+
+**Response (Text Message):**
 ```json
 {
   "success": true,
   "message": "Text message sent successfully to +923001234567",
   "data": {
-    "clientId": "user-1",
-    "phone": "+923001234567",
-    "message": "Hello from WhatsApp Bot!",
-    "file": null,
+    "message": {
+      "id": {
+        "fromMe": true,
+        "remote": "923001234567@c.us",
+        "id": "3EB0C767D26B5C8C4C4C",
+        "_serialized": "true_923001234567@c.us_3EB0C767D26B5C8C4C4C"
+      },
+      "body": "Hello from WhatsApp Bot!",
+      "type": "chat",
+      "timestamp": 1642248600,
+      "from": "923001234567@c.us",
+      "to": "923001234567@c.us",
+      "hasMedia": false
+    },
     "timestamp": "2024-01-15T10:30:00.000Z"
   }
 }
 ```
 
-**File Response:**
+**Response (File Upload):**
 ```json
 {
   "success": true,
   "message": "File sent successfully to +923001234567",
   "data": {
-    "clientId": "user-1",
-    "phone": "+923001234567",
-    "message": "Here's your document!",
-    "file": {
-      "filename": "document.pdf",
-      "type": "application/pdf",
-      "size": 1024000
+    "message": {
+      "id": {
+        "fromMe": true,
+        "remote": "923001234567@c.us",
+        "id": "3EB0C767D26B5C8C4C4C",
+        "_serialized": "true_923001234567@c.us_3EB0C767D26B5C8C4C4C"
+      },
+      "body": "Here's your document!",
+      "type": "image",
+      "timestamp": 1642248600,
+      "from": "923001234567@c.us",
+      "to": "923001234567@c.us",
+      "hasMedia": true,
+      "media": {
+        "mimetype": "application/pdf",
+        "filename": "document.pdf"
+      }
     },
     "timestamp": "2024-01-15T10:30:00.000Z"
   }
@@ -305,6 +331,35 @@ Logout and reset a specific client.
 - `400` - Client ID required
 - `404` - Client not found
 - `500` - Logout failed
+
+---
+
+## 💾 MongoDB Session Management
+
+The API automatically manages WhatsApp sessions using MongoDB for persistence:
+
+### Session Storage
+- **Automatic Storage** - Sessions are automatically saved to MongoDB
+- **GridFS Integration** - Uses GridFS for efficient session data storage
+- **Session Restoration** - Clients are automatically restored on server restart
+- **Multi-Client Support** - Each client has its own isolated session
+
+### Session Lifecycle
+1. **Login** - Client creates session and stores in MongoDB
+2. **Active** - Session remains active while client is connected
+3. **Restoration** - Session is restored when server restarts
+4. **Cleanup** - Sessions are cleaned up when clients logout
+
+### Session Configuration
+```javascript
+// Session is automatically configured with:
+{
+  clientId: 'unique-client-id',
+  store: MongoStore,
+  dataPath: '.wwebjs_auth',
+  backupSyncIntervalMs: 300000 // 5 minutes
+}
+```
 
 ---
 
@@ -395,6 +450,24 @@ function WhatsAppClient({ clientId }) {
     }
   }
 
+  const handleSendMessage = async (phone, text) => {
+    try {
+      const formData = new FormData()
+      formData.append('clientId', clientId)
+      formData.append('phone', phone)
+      formData.append('text', text)
+      
+      const response = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        body: formData
+      })
+      const result = await response.json()
+      console.log('Message sent:', result)
+    } catch (error) {
+      console.error('Send failed:', error)
+    }
+  }
+
   return (
     <div>
       <h2>WhatsApp Client: {clientId}</h2>
@@ -422,9 +495,9 @@ export default WhatsAppClient
 ## 📱 Phone Number Format
 
 All phone numbers must be in international format:
-- **Format**: `+92XXXXXXXXXX` (for Pakistan)
+- **Format**: `+92[0-9]{10}` (for Pakistan - exactly 10 digits after +92)
 - **Example**: `+923001234567`
-- **Validation**: Automatically validated by the API
+- **Validation**: Automatically validated by the API using regex pattern
 
 ---
 
@@ -437,22 +510,18 @@ All phone numbers must be in international format:
 | `PORT` | Server port | `3000` | No |
 | `NODE_ENV` | Environment | `development` | No |
 | `MONGODB_URI` | MongoDB connection string | - | Yes |
+| `ADMIN_PHONE` | Admin phone number for notifications | - | No |
+| `ALLOWED_ORIGINS` | CORS allowed origins (comma-separated) | - | No |
+| `URL` | Base URL for the application | - | No |
+| `PUPPETEER_EXECUTABLE_PATH` | Custom Chrome/Chromium path | Auto-detected | No |
 
 ### Chrome Arguments (Optimized for Performance)
 
 The API uses optimized Chrome arguments for better performance:
 - `--no-sandbox`
 - `--disable-setuid-sandbox`
-- `--disable-dev-shm-usage`
-- `--disable-accelerated-2d-canvas`
-- `--no-first-run`
-- `--no-zygote`
-- `--disable-gpu`
-- `--disable-background-timer-throttling`
-- `--disable-backgrounding-occluded-windows`
-- `--disable-renderer-backgrounding`
-- `--disable-features=TranslateUI`
-- `--disable-ipc-flooding-protection`
+
+**Note:** The Chrome arguments have been simplified for better compatibility and performance. Additional arguments can be added in the `CONSTANTS.CHROME_ARGS` array in the WhatsApp service.
 
 ---
 
@@ -463,10 +532,11 @@ The API uses optimized Chrome arguments for better performance:
 yarn dev          # Start development server with hot reload
 yarn build        # Build TypeScript to JavaScript
 yarn start        # Start production server
+yarn watch        # Start with ts-node watch mode
+yarn api          # Start API server with ts-node
 
 # Code Quality
-yarn lint         # Run ESLint
-yarn type-check   # Run TypeScript type checking
+yarn build        # Compile TypeScript to JavaScript
 ```
 
 ---
@@ -477,21 +547,31 @@ yarn type-check   # Run TypeScript type checking
 ```
 src/
 ├── api/
-│   ├── middleware/     # Validation and error handling
-│   └── routes/         # API route definitions
+│   ├── middleware/           # Validation and error handling
+│   │   ├── errorHandler.ts   # Custom error classes and handlers
+│   │   └── validation.ts     # Request validation middleware
+│   └── routes/               # API route definitions
+│       ├── index.ts          # Main router with health check
+│       └── whatsapp.routes.ts # WhatsApp-specific routes
 ├── services/
-│   ├── whatsapp.service.ts    # Core WhatsApp management
-│   ├── websocket.service.ts   # WebSocket communication
-│   └── global.ts              # Global service instances
-└── server.ts          # Main server setup
+│   ├── whatsapp.service.ts   # Core WhatsApp management
+│   ├── websocket.service.ts  # WebSocket communication
+│   ├── global.ts             # Global service instances
+│   └── index.ts              # Service exports
+├── types/
+│   └── business.ts           # Business entity types
+├── templates/                # Message templates (empty)
+└── server.ts                 # Main server setup
 ```
 
 ### Key Components
 
-1. **WhatsAppService** - Core client management
-2. **WebSocketService** - Real-time communication
-3. **Validation Middleware** - Request validation
-4. **Error Handler** - Centralized error management
+1. **WhatsAppService** - Core client management with MongoDB session persistence
+2. **WebSocketService** - Real-time communication for QR codes and status updates
+3. **Validation Middleware** - Request validation for phone numbers and file uploads
+4. **Error Handler** - Centralized error management with custom error classes
+5. **MongoDB Integration** - Session storage and restoration using wwebjs-mongo
+6. **Multi-Client Support** - Manage multiple WhatsApp instances simultaneously
 
 ---
 
@@ -499,15 +579,16 @@ src/
 
 The API uses custom error classes for better error management:
 
-- `WhatsAppClientError` - General client errors
+- `AppError` - Custom application errors with status codes
 - `WhatsAppTimeoutError` - Operation timeout errors
-- `WhatsAppNotReadyError` - Client not ready errors
+- `WhatsAppClientError` - General client errors
 
 All errors include:
 - Descriptive error messages
-- Client ID context
-- Error codes for programmatic handling
-- HTTP status codes
+- HTTP status codes (400, 404, 422, 500, etc.)
+- Error types for programmatic handling
+- Timestamp and request path information
+- Development stack traces (in development mode)
 
 ---
 
