@@ -1,15 +1,15 @@
+// Load environment variables FIRST before any other imports
+import dotenv from 'dotenv'
+dotenv.config()
+
 import express from 'express'
 import cors from 'cors'
 import morgan from 'morgan'
-import dotenv from 'dotenv'
 import rateLimit from 'express-rate-limit'
 import { createServer } from 'http'
 import { errorHandler, notFound } from './api/middleware/errorHandler'
 import apiRoutes from './api/routes'
 import { webSocketService } from './services/global'
-
-// Load environment variables
-dotenv.config()
 
 const app = express()
 const server = createServer(app)

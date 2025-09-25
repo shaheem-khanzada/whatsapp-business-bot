@@ -51,9 +51,7 @@ export class WebSocketService {
    * Generic broadcast method for any message type
    */
   broadcast(message: any) {
-    console.log('broadcast>>>????<<<>>>>', message)
-    console.log('connectedClients size', this.connectedClients.size)
-    console.log('connectedClients', this.connectedClients)
+    console.log('socket message', message)
     if (this.connectedClients.size === 0) {
       return
     }

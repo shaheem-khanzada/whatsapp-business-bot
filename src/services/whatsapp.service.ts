@@ -5,9 +5,6 @@ import { MongoStore } from 'wwebjs-mongo'
 import fs from 'fs'
 import path from 'path'
 import { webSocketService } from './global'
-import dotenv from 'dotenv'
-
-dotenv.config()
 
 // Constants
 const CONSTANTS = {
