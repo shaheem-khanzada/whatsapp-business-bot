@@ -117,6 +117,7 @@ export class WhatsAppService {
       
       // Check if .wwebjs_auth exists
       console.log(`.wwebjs_auth exists: ${fs.existsSync(this.authPath)}`)
+      console.log(`src exists: ${fs.existsSync(path.resolve(process.cwd(), 'src'))}`)
       
     } catch (error: any) {
       console.error(`  ❌ Error checking directories:`, error.message)
@@ -236,6 +237,7 @@ export class WhatsAppService {
     const authStrategy = new RemoteAuth({
       clientId,
       store: this.mongoStore,
+      dataPath: this.authPath,
       backupSyncIntervalMs: CONSTANTS.CONFIG.BACKUP_SYNC_INTERVAL,
     })
 
