@@ -26,17 +26,6 @@ export const errorHandler = (
 ) => {
   let error = { ...err }
   error.message = err.message
-
-  // Log error with more details
-  console.error('🚨 API Error:', {
-    message: err.message,
-    statusCode: err.statusCode || 500,
-    stack: err.stack,
-    url: req.originalUrl,
-    method: req.method,
-    timestamp: new Date().toISOString()
-  })
-
   // Default error
   if (!error.statusCode) {
     error.statusCode = 500
