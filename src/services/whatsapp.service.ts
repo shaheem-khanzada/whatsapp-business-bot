@@ -65,13 +65,6 @@ interface WebSocketMessage {
   timestamp: string
 }
 
-interface ClientInfo {
-  clientId: string
-  status: string
-  isReady: boolean
-  hasQRCode: boolean
-}
-
 // Custom Error Classes
 class WhatsAppClientError extends Error {
   constructor(message: string, public clientId: string, public code?: string) {
@@ -106,6 +99,47 @@ export class WhatsAppService {
 
   constructor() {
     this.authPath = path.resolve(process.cwd(), '.wwebjs_auth')
+    
+    // Debug logs to check server directory structure
+    console.log(`🔍 SERVER DIRECTORY DEBUG:`)
+    console.log(`  NODE_ENV: ${process.env.NODE_ENV}`)
+    console.log(`  process.cwd(): ${process.cwd()}`)
+    console.log(`  authPath: ${this.authPath}`)
+    
+    try {
+      // List current directory contents
+      const currentDir = fs.readdirSync(process.cwd())
+      console.log(`  Current directory contents:`, currentDir)
+      
+      // Check if .wwebjs_auth exists
+      console.log(`  .wwebjs_auth exists: ${fs.existsSync(this.authPath)}`)
+      
+      // List /tmp directory if it exists
+      if (fs.existsSync('/tmp')) {
+        const tmpContents = fs.readdirSync('/tmp')
+        console.log(`  /tmp directory contents:`, tmpContents.slice(0, 10)) // First 10 items
+      }
+      
+      // Check if we can write to current directory
+      try {
+        fs.accessSync(process.cwd(), fs.constants.W_OK)
+        console.log(`  Current directory writable: true`)
+      } catch {
+        console.log(`  Current directory writable: false`)
+      }
+      
+      // Check if we can write to /tmp
+      try {
+        fs.accessSync('/tmp', fs.constants.W_OK)
+        console.log(`  /tmp directory writable: true`)
+      } catch {
+        console.log(`  /tmp directory writable: false`)
+      }
+      
+    } catch (error: any) {
+      console.error(`  ❌ Error checking directories:`, error?.message)
+    }
+    
     this.initializeMongoDB()
   }
 
