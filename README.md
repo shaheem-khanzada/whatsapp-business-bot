@@ -65,6 +65,17 @@ http://localhost:3000/api/whatsapp
 ### Authentication
 No authentication required for this API.
 
+### Health Check
+```
+GET /api/health
+```
+
+### Root Endpoint
+```
+GET /
+```
+Returns API information and available endpoints.
+
 ---
 
 ## 🔗 API Endpoints
@@ -234,18 +245,18 @@ file: [File object]
 
 ### 5. Get Client Status
 
-**GET** `/status/:clientId`
+**GET** `/status?clientId=:clientId`
 
 Get the current status of a specific client.
 
-**Parameters:**
+**Query Parameters:**
 - `clientId` (string) - The client identifier
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Client status retrieved successfully",
+  "message": "WhatsApp client 'user-1' status retrieved successfully",
   "data": {
     "clientId": "user-1",
     "status": "CONNECTED",
@@ -283,6 +294,7 @@ Logout and reset a specific client.
   "message": "WhatsApp client 'user-1' logged out successfully",
   "data": {
     "clientId": "user-1",
+    "status": "DISCONNECTED",
     "timestamp": "2024-01-15T10:30:00.000Z"
   }
 }
@@ -292,35 +304,7 @@ Logout and reset a specific client.
 - `200` - Client logged out successfully
 - `400` - Client ID required
 - `404` - Client not found
-- `422` - Client not connected
-
----
-
-### 7. Force Close Client
-
-**POST** `/force-close/:clientId`
-
-Force close a client immediately (emergency cleanup).
-
-**Parameters:**
-- `clientId` (string) - The client identifier
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "WhatsApp client 'user-1' force closed successfully",
-  "data": {
-    "clientId": "user-1",
-    "timestamp": "2024-01-15T10:30:00.000Z"
-  }
-}
-```
-
-**Status Codes:**
-- `200` - Client force closed successfully
-- `400` - Client ID required
-- `500` - Force close failed
+- `500` - Logout failed
 
 ---
 

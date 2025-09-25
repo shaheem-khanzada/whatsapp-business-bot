@@ -128,7 +128,6 @@ export class WhatsAppService {
       console.log('✅ MongoStore initialized successfully')
     } catch (error) {
       console.error('❌ MongoDB connection failed:', error)
-      console.log('⚠️ Falling back to LocalAuth')
     }
   }
 
