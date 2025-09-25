@@ -2,7 +2,6 @@ import { RemoteAuth, Client, MessageMedia } from 'whatsapp-web.js'
 import QRCodeGenerator from 'qrcode'
 import mongoose from 'mongoose'
 import { MongoStore } from 'wwebjs-mongo'
-import fs from 'fs'
 import path from 'path'
 import { webSocketService } from './global'
 
@@ -36,17 +35,7 @@ const CONSTANTS = {
   },
   CHROME_ARGS: [
     '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-accelerated-2d-canvas',
-    '--no-first-run',
-    '--no-zygote',
-    '--disable-gpu',
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
-    '--disable-features=TranslateUI',
-    '--disable-ipc-flooding-protection',
+    '--disable-setuid-sandbox'
   ],
 } as const
 
@@ -98,30 +87,8 @@ export class WhatsAppService {
   private mongoStore: InstanceType<typeof MongoStore> | null = null
 
   constructor() {
-    this.authPath = path.resolve(process.cwd(), '.wwebjs_auth')  
+    this.authPath = path.resolve(process.cwd(), '.wwebjs_auth')
     this.initializeMongoDB()
-    this.info()
-  }
-
-  private async info() {
-    // Debug logs to check server directory structure
-    console.log(`🔍 SERVER DIRECTORY DEBUG:`)
-    console.log(`  NODE_ENV: ${process.env.NODE_ENV}`)
-    console.log(`  process.cwd(): ${process.cwd()}`)
-    console.log(`  authPath: ${this.authPath}`)
-    
-    try {
-      // List current directory contents
-      const currentDir = fs.readdirSync(process.cwd())
-      console.log(`  Current directory contents:`, currentDir)
-      
-      // Check if .wwebjs_auth exists
-      console.log(`.wwebjs_auth exists: ${fs.existsSync(this.authPath)}`)
-      console.log(`src exists: ${fs.existsSync(path.resolve(process.cwd(), 'src'))}`)
-      
-    } catch (error: any) {
-      console.error(`  ❌ Error checking directories:`, error.message)
-    }
   }
 
   // ==================== INITIALIZATION ====================
@@ -136,31 +103,56 @@ export class WhatsAppService {
       console.log('✅ MongoDB connected successfully')
 
       this.mongoStore = new MongoStore({ mongoose })
-      await this.restoreAllClients()
+      const sessionIds = await this.getClientSessionIds()
+      await this.restoreAllClients(sessionIds)
       console.log('✅ MongoStore initialized successfully')
     } catch (error) {
       console.error('❌ MongoDB connection failed:', error)
     }
   }
 
+  private async getClientSessionIds(): Promise<string[]> {
+    try {
+
+      const db = mongoose.connection.db;
+
+      if (!db) {
+        throw new Error('MongoDB connection not established')
+      }
+
+      const collections = await db.listCollections().toArray();
+
+      // Step 3: Filter collections with GridFS naming
+      const sessionIds = collections
+        .filter(col => col.name.startsWith('whatsapp-RemoteAuth-') && col.name.endsWith('.files'))
+        .map(col => {
+          return col.name
+            .replace('whatsapp-RemoteAuth-', '')
+            .replace('.files', '');
+        });
+      return sessionIds;
+    } catch (err) {
+      console.error('Error fetching session names:', err);
+      return [];
+    }
+  }
+
   /**
    * Restore all existing client sessions from auth directory
    */
-  private async restoreAllClients(): Promise<void> {
-    if (!fs.existsSync(this.authPath)) return
+  private async restoreAllClients(sessionIds: string[]): Promise<void> {
+    if (!sessionIds.length) return
 
-    const clientIds = await this.getClientIdsFromAuthPath()
-    console.log(`🔄 Found ${clientIds.length} RemoteAuth sessions:`, clientIds)
+    console.log(`🔄 Found ${sessionIds.length} RemoteAuth sessions:`, sessionIds)
 
-    for (const clientId of clientIds) {
+    for (const clientId of sessionIds) {
       try {
-        const sessionExists = await this.mongoStore?.sessionExists({ 
-          session: this.getSessionName(clientId) 
+        const sessionExists = await this.mongoStore?.sessionExists({
+          session: this.getSessionName(clientId)
         }) ?? false
 
         if (!sessionExists) {
           console.log(`Session does not exist for client ${clientId}`)
-          this.deleteAuthDirectory(clientId)
           continue
         }
 
@@ -171,26 +163,6 @@ export class WhatsAppService {
       }
     }
   }
-
-  /**
-   * Get client IDs from auth directory
-   */
-  private async getClientIdsFromAuthPath(): Promise<string[]> {
-    if (!fs.existsSync(this.authPath)) return []
-
-    const entries = fs.readdirSync(this.authPath, { withFileTypes: true })
-    return entries
-      .filter(entry => entry.isDirectory() && entry.name.startsWith('RemoteAuth-'))
-      .map(entry => entry.name.replace(/^RemoteAuth-/, ''))
-      .filter(clientId => {
-        const fullPath = path.join(this.authPath, this.getSessionName(clientId))
-        if (!fs.existsSync(fullPath)) return false
-        const contents = fs.readdirSync(fullPath)
-        return contents.length > 0
-      })
-  }
-
-  // ==================== CLIENT MANAGEMENT ====================
 
   /**
    * Initialize WhatsApp client with QR authentication
@@ -257,7 +229,7 @@ export class WhatsAppService {
     const initPromise = client.initialize()
     await Promise.race([
       initPromise,
-      new Promise((_, reject) => 
+      new Promise((_, reject) =>
         setTimeout(() => reject(new WhatsAppTimeoutError(clientId, 'Initialize')), CONSTANTS.TIMEOUTS.INIT)
       )
     ])
@@ -274,7 +246,7 @@ export class WhatsAppService {
       const timeout = setTimeout(async () => {
         console.log(`⏰ Client ${clientId} did not become ready within 2 minutes, closing...`)
         this.broadcastStatus(clientId, CONSTANTS.STATUS.TIMEOUT)
-        await this.safeClose(clientId)
+        await this.close(clientId)
         reject(new WhatsAppTimeoutError(clientId, 'Ready check'))
       }, CONSTANTS.TIMEOUTS.READY_WAIT)
 
@@ -291,7 +263,7 @@ export class WhatsAppService {
         } catch (error) {
           clearTimeout(timeout)
           this.broadcastStatus(clientId, CONSTANTS.STATUS.ERROR)
-          await this.safeClose(clientId)
+          await this.close(clientId)
           reject(error)
         }
       }
@@ -306,8 +278,8 @@ export class WhatsAppService {
    * Setup all event handlers for a client
    */
   private setupEventHandlers(
-    client: InstanceType<typeof Client>, 
-    clientId: string, 
+    client: InstanceType<typeof Client>,
+    clientId: string,
     options: { restore: boolean; sessionExists: boolean }
   ): void {
     this.setupQRHandler(client, clientId, options)
@@ -322,32 +294,31 @@ export class WhatsAppService {
    * Setup QR code event handler
    */
   private setupQRHandler(
-    client: InstanceType<typeof Client>, 
-    clientId: string, 
+    client: InstanceType<typeof Client>,
+    clientId: string,
     options: { restore: boolean; sessionExists: boolean }
   ): void {
     client.on('qr', async (qr: string) => {
       try {
         if (options.restore && options.sessionExists) {
-          await this.safeClose(clientId)
+          await this.close(clientId)
           console.log('Client closed due to restore and session exists but QR code generated')
-          return
+        } else {
+          console.log(`📱 QR code generated for client: ${clientId}`)
+          const qrCodeDataUrl = await QRCodeGenerator.toDataURL(qr)
+          this.qrCodes.set(clientId, qrCodeDataUrl)
+
+          // Broadcast QR code
+          this.broadcast({
+            type: 'qr-code',
+            clientId,
+            qrCode: qrCodeDataUrl,
+            timestamp: new Date().toISOString(),
+          })
+
+          // Broadcast status update
+          this.broadcastStatus(clientId, CONSTANTS.STATUS.AWAITING_SCAN)
         }
-
-        console.log(`📱 QR code generated for client: ${clientId}`)
-        const qrCodeDataUrl = await QRCodeGenerator.toDataURL(qr)
-        this.qrCodes.set(clientId, qrCodeDataUrl)
-
-        // Broadcast QR code
-        this.broadcast({
-          type: 'qr-code',
-          clientId,
-          qrCode: qrCodeDataUrl,
-          timestamp: new Date().toISOString(),
-        })
-
-        // Broadcast status update
-        this.broadcastStatus(clientId, CONSTANTS.STATUS.AWAITING_SCAN)
       } catch (error) {
         console.warn(`⚠️ QR generation failed for ${clientId}:`, error)
       }
@@ -363,7 +334,6 @@ export class WhatsAppService {
       this.qrCodes.delete(clientId)
       client.removeAllListeners('qr')
       this.broadcastStatus(clientId, CONSTANTS.STATUS.CONNECTED)
-      this.info()
     })
   }
 
@@ -374,7 +344,7 @@ export class WhatsAppService {
     client.on('auth_failure', (msg: string) => {
       console.log(`❌ AUTH FAILURE for ${clientId}: ${msg}`)
       this.broadcastStatus(clientId, CONSTANTS.STATUS.AUTH_FAILED)
-      this.safeClose(clientId)
+      this.close(clientId)
     })
   }
 
@@ -385,7 +355,7 @@ export class WhatsAppService {
     client.on('disconnected', (reason: string) => {
       console.log(`🔌 Client ${clientId} disconnected: ${reason}`)
       this.broadcastStatus(clientId, CONSTANTS.STATUS.DISCONNECTED)
-      this.safeClose(clientId)
+      this.close(clientId)
     })
   }
 
@@ -395,7 +365,7 @@ export class WhatsAppService {
   private setupLoadingHandler(client: InstanceType<typeof Client>, clientId: string): void {
     client.on('loading_screen', (percent: number, msg: string) => {
       console.log(`⏳ Loading ${clientId}: ${percent}% - ${msg}`)
-      
+
       // Broadcast loading status
       this.broadcastStatus(clientId, CONSTANTS.STATUS.LOADING)
     })
@@ -407,7 +377,6 @@ export class WhatsAppService {
   private setupSessionHandlers(client: InstanceType<typeof Client>, clientId: string): void {
     client.on('remote_session_saved', () => {
       console.log(`💾 Remote session saved for ${clientId}`)
-      this.info()
     })
 
     client.on('authenticated', (session: any) => {
@@ -424,7 +393,7 @@ export class WhatsAppService {
     await this.ensureClientReady(clientId)
     const client = this.clients.get(clientId)!
     const chatId = this.toChatId(phone)
-    
+
     await client.sendMessage(chatId, message)
     console.log(`💬 Text sent to ${phone} via client ${clientId}`)
   }
@@ -470,7 +439,7 @@ export class WhatsAppService {
   async getStatus(clientId: string): Promise<string> {
     try {
       if (!this.clients.has(clientId)) return CONSTANTS.STATUS.NOT_INITIALIZED
-      
+
       const client = this.clients.get(clientId)!
       const state = await client.getState()
 
@@ -491,7 +460,7 @@ export class WhatsAppService {
   async isClientReady(clientId: string): Promise<boolean> {
     try {
       if (!this.clients.has(clientId)) return false
-      
+
       const client = this.clients.get(clientId)!
       const state = await client.getState()
       return state === CONSTANTS.STATUS.CONNECTED
@@ -608,8 +577,6 @@ export class WhatsAppService {
     this.qrCodes.delete(clientId)
     console.log(`✅ Client ${clientId} removed from memory`)
 
-    // Clean up auth directory in background
-    setTimeout(() => this.deleteAuthDirectory(clientId), CONSTANTS.CONFIG.AUTH_CLEANUP_DELAY)
     console.log(`✅ Client ${clientId} closed successfully`)
   }
 
@@ -649,10 +616,10 @@ export class WhatsAppService {
         return false
       }
 
-      const sessionExists = await this.mongoStore.sessionExists({ 
-        session: this.getSessionName(clientId) 
+      const sessionExists = await this.mongoStore.sessionExists({
+        session: this.getSessionName(clientId)
       })
-      
+
       if (!sessionExists) {
         console.log(`ℹ️ No session found for client ${clientId} in MongoDB`)
         return false
@@ -725,24 +692,13 @@ export class WhatsAppService {
   }
 
   /**
-   * Safe close with error handling
-   */
-  private async safeClose(clientId: string): Promise<void> {
-    try {
-      await this.close(clientId)
-    } catch (error) {
-      console.error(`Error closing client ${clientId}:`, error)
-    }
-  }
-
-  /**
    * Handle login errors
    */
   private async handleLoginError(clientId: string, error: any, waitForReady: boolean): Promise<void> {
     if (waitForReady && this.clients.has(clientId)) {
       console.log(`❌ Error during login for ${clientId}, closing client...`)
       this.broadcastStatus(clientId, CONSTANTS.STATUS.ERROR)
-      await this.safeClose(clientId)
+      await this.close(clientId)
     }
   }
 
@@ -755,10 +711,10 @@ export class WhatsAppService {
     operationName: string
   ): Promise<T> {
     try {
-      const timeoutPromise = new Promise<never>((_, reject) => 
+      const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
       )
-      
+
       const result = await Promise.race([operation(), timeoutPromise])
       console.log(`✅ ${operationName} completed`)
       return result
@@ -775,18 +731,4 @@ export class WhatsAppService {
     return new Promise(resolve => setTimeout(resolve, ms))
   }
 
-  /**
-   * Delete auth directory for a client
-   */
-  private deleteAuthDirectory(clientId: string): void {
-    try {
-      const authDir = path.join(this.authPath, this.getSessionName(clientId))
-      if (fs.existsSync(authDir)) {
-        fs.rmSync(authDir, { recursive: true, force: true })
-        console.log(`🗑️ Deleted auth directory for ${clientId}`)
-      }
-    } catch (error) {
-      console.error(`❌ Failed to delete auth directory for ${clientId}:`, error)
-    }
-  }
 }
