@@ -409,14 +409,16 @@ export class WhatsAppService {
     mimeType: string,
     caption?: string
   ): Promise<void> {
+    console.log('Sending file to client', clientId)
     await this.ensureClientReady(clientId)
+    console.log('Client ready', clientId)
     const client = this.clients.get(clientId)!
 
     const arrayBuffer = await file.arrayBuffer()
     const fileBuffer = Buffer.from(arrayBuffer)
     const media = new MessageMedia(mimeType, fileBuffer.toString('base64'), filename)
     const chatId = this.toChatId(phone)
-
+    console.log('Chat ID', chatId)
     await client.sendMessage(chatId, media, { caption })
     console.log(`📎 File sent to ${phone} via client ${clientId}: ${filename}`)
   }
