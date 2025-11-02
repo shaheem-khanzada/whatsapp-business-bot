@@ -15,7 +15,6 @@ const CONSTANTS = {
     CLOSE_DESTROY: 10000, // 10 seconds
     CLOSE_SESSION: 5000, // 5 seconds
     CLOSE_ALL: 30000, // 30 seconds
-    SEND_FILE_WAIT: 120000, // 2 minutes
   },
   STATUS: {
     CONNECTED: 'CONNECTED',
@@ -394,7 +393,6 @@ export class WhatsAppService {
     const chatId = this.toChatId(phone)
 
     const message = await client.sendMessage(chatId, msg)
-    await this.sleep(CONSTANTS.TIMEOUTS.SEND_FILE_WAIT)
     console.log('Message', message)
     console.log(`💬 Text sent to ${phone} via client ${clientId}`)
     return message
@@ -419,7 +417,6 @@ export class WhatsAppService {
     const media = new MessageMedia(mimeType, fileBuffer.toString('base64'), filename)
     const chatId = this.toChatId(phone)
     const message = await client.sendMessage(chatId, media, { caption })
-    await this.sleep(CONSTANTS.TIMEOUTS.SEND_FILE_WAIT)
     console.log(`📎 File sent to ${phone} via client ${clientId}: ${filename}`)
     return message
   }
