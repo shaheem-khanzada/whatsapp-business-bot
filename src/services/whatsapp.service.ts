@@ -36,7 +36,10 @@ const CONSTANTS = {
   CHROME_ARGS: [
     '--no-sandbox',
     '--disable-setuid-sandbox',
-    `--display=${process.env.DISPLAY ?? ':0'}`
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-dev-shm-usage'
   ],
 } as const
 
