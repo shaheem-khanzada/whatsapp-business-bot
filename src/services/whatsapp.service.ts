@@ -35,11 +35,7 @@ const CONSTANTS = {
   },
   CHROME_ARGS: [
     '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--disable-software-rasterizer',
-    '--disable-dev-shm-usage'
+    '--disable-setuid-sandbox'
   ],
 } as const
 
