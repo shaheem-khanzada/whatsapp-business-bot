@@ -217,7 +217,7 @@ export class WhatsAppService {
     return new Client({
       authStrategy,
       puppeteer: {
-        headless: process.env.NODE_ENV === 'production',
+        headless: true,
         args: [...CONSTANTS.CHROME_ARGS],
       },
     })
