@@ -105,7 +105,6 @@ export class WhatsAppService {
       this.mongoStore = new MongoStore({ mongoose })
       const sessionIds = await this.getClientSessionIds()
       await this.restoreAllClients(sessionIds)
-      console.log('process.env.NODE_ENV', process.env.NODE_ENV)
       console.log('✅ MongoStore initialized successfully')
     } catch (error) {
       console.error('❌ MongoDB connection failed:', error)
