@@ -8,6 +8,6 @@ app.use(express.json())
 app.use(fileUpload())
 app.use(cors({ origin: '*' }))
 
-app.use('/clients', clientsRoutes)
+app.use('/api/clients', clientsRoutes)
 
 export default app
