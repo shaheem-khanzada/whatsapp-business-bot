@@ -10,14 +10,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "moduleResolution": "node",
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "sourceMap": true
   },
-  "include": ["src/**/*", "src/server.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
+
